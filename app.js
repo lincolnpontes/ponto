@@ -2,6 +2,7 @@
   "use strict";
 
   const STORAGE_KEY = "ponto_app_state_v1";
+  const DEFAULT_SYNC_URL = String(window.PONTO_CONFIG?.appsScriptUrl || "").trim().replace(/\/+$/, "");
   const ACTIVE_POLL_MS = 250;
   const LOBBY_POLL_MS = 650;
   const PENALTY_MS = 3000;
@@ -159,7 +160,7 @@
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); } catch (_) { saved = {}; }
     return {
-      syncUrl: saved.syncUrl || "",
+      syncUrl: Object.prototype.hasOwnProperty.call(saved, "syncUrl") ? saved.syncUrl : DEFAULT_SYNC_URL,
       sound: saved.sound !== false,
       profile: {
         id: saved.profile?.id || uid("player"),

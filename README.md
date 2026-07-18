@@ -22,6 +22,7 @@ Jogo multiplayer inspirado na lógica matemática do Dobble, feito como PWA est�
 index.html                         interface
 style.css                         visual responsivo
 app.js                            jogo, baralho, salas e sincronização
+config.js                         URL padrão do Google Apps Script
 manifest.json                     instalação PWA
 service-worker.js                 cache offline
 themes/letters-numbers/           tema isolado e seus 57 símbolos
@@ -49,6 +50,8 @@ Depois abra `http://localhost:8787`.
 6. No PONTO!, abra **Perfil → Sincronização e ajustes**, cole a URL e toque em **Testar e salvar**.
 
 A primeira chamada cria automaticamente no seu Google Drive a planilha `PONTO! — Banco de dados`, com as abas `PROFILES`, `ROOMS`, `EVENTS` e `MATCHES`.
+
+A URL da implantação principal já fica definida em `config.js`. Em um aparelho novo, o app usa essa URL automaticamente; uma URL salva manualmente nos ajustes continua tendo prioridade.
 
 ## Como a disputa é decidida
 
