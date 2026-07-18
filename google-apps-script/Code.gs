@@ -14,7 +14,12 @@ const SECRET_PROPERTY = 'PONTO_TOKEN_SECRET';
 const ROOM_TTL_MS = 12 * 60 * 60 * 1000;
 const PENALTY_MS = 3000;
 const ADMIN_PROFILE_ID = 'admin_lincoln';
-const ADMIN_INITIAL_PIN = '784';
+const ADMIN_INITIAL_PIN = '0784';
+const BACKEND_VERSION = 6;
+const CACHE_SECONDS = 21600;
+const FIRST_ROUND_LEAD_MS = 5000;
+const NEXT_ROUND_LEAD_MS = 2200;
+const ROUND_RESULT_MS = 1200;
 
 const SHEETS = {
   PROFILES: ['id', 'name', 'avatar', 'tokenHash', 'pinHash', 'games', 'wins', 'roundWins', 'bestStreak', 'createdAt', 'lastSeenAt'],
@@ -36,27 +41,29 @@ function doGet() {
 }
 
 function doPost(event) {
+  const serverReceivedAt = Date.now();
   try {
     const request = parseRequest_(event);
     if (request.appId && request.appId !== APP_ID) throw new Error('Aplicativo não reconhecido.');
     const result = dispatch_(request);
-    return json_({ ok: true, serverTime: Date.now(), ...result });
+    return json_({ ok: true, serverReceivedAt, serverTime: Date.now(), ...result });
   } catch (error) {
-    return json_({ ok: false, error: error && error.message ? error.message : String(error) });
+    return json_({ ok: false, serverReceivedAt, serverTime: Date.now(), error: error && error.message ? error.message : String(error) });
   }
 }
 
 function dispatch_(request) {
   const action = String(request.action || 'status');
   const payload = request.payload || {};
-  ensureDatabase_();
+  ensureDatabaseReady_();
 
   if (action === 'status') {
-    return { initialized: true, version: 4, spreadsheetUrl: getDatabase_().getUrl() };
+    return { initialized: true, version: BACKEND_VERSION, spreadsheetUrl: getDatabase_().getUrl() };
   }
   if (action === 'createProfile') return withLock_(() => createProfile_(request, payload));
   if (action === 'loginProfile') return withLock_(() => loginProfile_(payload));
   if (action === 'updateProfile') return withLock_(() => updateProfile_(request, payload));
+  if (action === 'changePin') return withLock_(() => changePin_(request, payload));
   if (action === 'createRoom') return withLock_(() => createRoom_(request, payload));
   if (action === 'openRooms') return openRooms_();
   if (action === 'joinRoom') return withLock_(() => joinRoom_(request, payload));
@@ -66,8 +73,13 @@ function dispatch_(request) {
   if (action === 'leaveRoom') return withLock_(() => leaveRoom_(request, payload));
   if (action === 'startGame') return withLock_(() => startGame_(request, payload));
   if (action === 'claim') return withLock_(() => claim_(request, payload));
-  if (action === 'room') return withLock_(() => readRoom_(request, payload));
+  if (action === 'room') return readRoom_(request, payload);
   if (action === 'ranking') return ranking_();
+  if (action === 'adminPlayers') return adminPlayers_(request);
+  if (action === 'adminRooms') return adminRooms_(request);
+  if (action === 'adminResetPin') return withLock_(() => adminResetPin_(request, payload));
+  if (action === 'adminDeletePlayer') return withLock_(() => adminDeletePlayer_(request, payload));
+  if (action === 'adminCloseRoom') return withLock_(() => adminCloseRoom_(request, payload));
   throw new Error('Ação desconhecida.');
 }
 
@@ -126,6 +138,10 @@ function ensureDatabase_() {
   return spreadsheet;
 }
 
+function ensureDatabaseReady_() {
+  if (!PropertiesService.getScriptProperties().getProperty(DATABASE_PROPERTY)) ensureDatabase_();
+}
+
 function getDatabase_() {
   return SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty(DATABASE_PROPERTY));
 }
@@ -148,7 +164,9 @@ function rows_(name) {
 
 function append_(name, object) {
   const headers = SHEETS[name];
-  sheet_(name).appendRow(headers.map((header) => object[header] === undefined ? '' : object[header]));
+  const sheet = sheet_(name);
+  sheet.appendRow(headers.map((header) => object[header] === undefined ? '' : object[header]));
+  return sheet.getLastRow();
 }
 
 function writeRow_(name, rowNumber, object) {
@@ -158,6 +176,10 @@ function writeRow_(name, rowNumber, object) {
 
 function cleanName_(value) {
   return String(value || 'Jogador').replace(/[<>\n\r]/g, '').trim().slice(0, 18) || 'Jogador';
+}
+
+function normalizedName_(value) {
+  return cleanName_(value).toLocaleLowerCase().replace(/\s+/g, ' ');
 }
 
 function cleanAvatar_(value) {
@@ -190,8 +212,36 @@ function profileFromRow_(row) {
   };
 }
 
+function profileCacheKey_(id) {
+  return `profile:${String(id || '')}`;
+}
+
+function cacheProfile_(row) {
+  if (!row || !row.id) return;
+  CacheService.getScriptCache().put(profileCacheKey_(row.id), JSON.stringify(row), CACHE_SECONDS);
+}
+
 function findProfile_(id) {
-  return rows_('PROFILES').find((row) => String(row.id) === String(id)) || null;
+  const key = profileCacheKey_(id);
+  const cached = CacheService.getScriptCache().get(key);
+  if (cached) {
+    try { return JSON.parse(cached); } catch (_) { CacheService.getScriptCache().remove(key); }
+  }
+  const row = rows_('PROFILES').find((entry) => String(entry.id) === String(id)) || null;
+  if (row) cacheProfile_(row);
+  return row;
+}
+
+function profilesByName_(name) {
+  const normalized = normalizedName_(name);
+  return rows_('PROFILES').filter((row) => normalizedName_(row.name) === normalized);
+}
+
+function saveProfile_(row) {
+  if (!row) return;
+  if (row._row) writeRow_('PROFILES', row._row, row);
+  else row._row = append_('PROFILES', row);
+  cacheProfile_(row);
 }
 
 function requireProfile_(request) {
@@ -199,8 +249,6 @@ function requireProfile_(request) {
   const token = String(request.token || '');
   const row = findProfile_(id);
   if (!row || !token || row.tokenHash !== tokenHash_(token)) throw new Error('Perfil ou sessão inválidos. Salve seu perfil novamente.');
-  row.lastSeenAt = Date.now();
-  writeRow_('PROFILES', row._row, row);
   return row;
 }
 
@@ -208,19 +256,21 @@ function createProfile_(request, payload) {
   const requestedId = String(payload.id || request.profileId || Utilities.getUuid());
   const existing = findProfile_(requestedId);
   if (existing) throw new Error('Esse perfil já existe neste servidor. Reconecte ou crie outro perfil.');
+  const name = cleanName_(payload.name);
+  if (profilesByName_(name).length) throw new Error('Esse nome de jogador já está cadastrado. Entre com a senha dele.');
   const token = randomToken_();
   const pin = String(payload.pin || '');
-  if (!/^\d{3}$/.test(pin)) throw new Error('A senha do perfil deve ter exatamente 3 números.');
+  if (!/^\d{4}$/.test(pin)) throw new Error('A senha do perfil deve ter exatamente 4 números.');
   const row = {
     id: requestedId,
-    name: cleanName_(payload.name),
+    name,
     avatar: cleanAvatar_(payload.avatar),
     tokenHash: tokenHash_(token),
     pinHash: secretHash_(`profile:${requestedId}`, pin),
     games: 0, wins: 0, roundWins: 0, bestStreak: 0,
     createdAt: Date.now(), lastSeenAt: Date.now(),
   };
-  append_('PROFILES', row);
+  saveProfile_(row);
   return { token, profile: profileFromRow_(row) };
 }
 
@@ -230,12 +280,12 @@ function ensureAdminProfile_() {
     const cleanedAvatar = cleanAvatar_(existing.avatar);
     if (cleanedAvatar !== String(existing.avatar)) {
       existing.avatar = cleanedAvatar;
-      writeRow_('PROFILES', existing._row, existing);
+      saveProfile_(existing);
     }
     return;
   }
   const token = randomToken_();
-  append_('PROFILES', {
+  saveProfile_({
     id: ADMIN_PROFILE_ID, name: 'Lincoln', avatar: '🦊',
     tokenHash: tokenHash_(token), pinHash: secretHash_(`profile:${ADMIN_PROFILE_ID}`, ADMIN_INITIAL_PIN),
     games: 0, wins: 0, roundWins: 0, bestStreak: 0,
@@ -245,27 +295,45 @@ function ensureAdminProfile_() {
 
 function loginProfile_(payload) {
   const id = String(payload.id || '');
+  const name = cleanName_(payload.name || '');
   const pin = String(payload.pin || '');
-  const row = findProfile_(id);
-  if (!row || !/^\d{3}$/.test(pin) || row.pinHash !== secretHash_(`profile:${id}`, pin)) throw new Error('Perfil ou PIN incorretos.');
+  const candidates = id ? [findProfile_(id)].filter(Boolean) : profilesByName_(name);
+  const row = candidates.sort((a, b) => Number(b.lastSeenAt || 0) - Number(a.lastSeenAt || 0))
+    .find((entry) => /^\d{3,4}$/.test(pin) && entry.pinHash === secretHash_(`profile:${entry.id}`, pin));
+  if (!row) throw new Error('Nome ou senha incorretos.');
   const token = randomToken_();
   row.tokenHash = tokenHash_(token);
   row.lastSeenAt = Date.now();
-  writeRow_('PROFILES', row._row, row);
+  saveProfile_(row);
   return { token, profile: profileFromRow_(row) };
 }
 
 function updateProfile_(request, payload) {
   const row = requireProfile_(request);
-  row.name = cleanName_(payload.name);
+  const nextName = cleanName_(payload.name);
+  const duplicate = profilesByName_(nextName).find((entry) => String(entry.id) !== String(row.id));
+  if (duplicate) throw new Error('Esse nome já pertence a outro jogador.');
+  row.name = nextName;
   row.avatar = cleanAvatar_(payload.avatar);
   if (payload.pin !== undefined && payload.pin !== '') {
     const pin = String(payload.pin);
-    if (!/^\d{3}$/.test(pin)) throw new Error('A senha do perfil deve ter exatamente 3 números.');
+    if (!/^\d{4}$/.test(pin)) throw new Error('A senha do perfil deve ter exatamente 4 números.');
     row.pinHash = secretHash_(`profile:${row.id}`, pin);
   }
   row.lastSeenAt = Date.now();
-  writeRow_('PROFILES', row._row, row);
+  saveProfile_(row);
+  return { profile: profileFromRow_(row) };
+}
+
+function changePin_(request, payload) {
+  const row = requireProfile_(request);
+  const currentPin = String(payload.currentPin || '');
+  const newPin = String(payload.newPin || '');
+  if (!/^\d{3,4}$/.test(currentPin) || row.pinHash !== secretHash_(`profile:${row.id}`, currentPin)) throw new Error('A senha atual está incorreta.');
+  if (!/^\d{4}$/.test(newPin)) throw new Error('A nova senha deve ter exatamente 4 números.');
+  row.pinHash = secretHash_(`profile:${row.id}`, newPin);
+  row.lastSeenAt = Date.now();
+  saveProfile_(row);
   return { profile: profileFromRow_(row) };
 }
 
@@ -338,7 +406,7 @@ function createRoom_(request, payload) {
     updatedAt: timestamp, expiresAt: timestamp + ROOM_TTL_MS,
     hasPassword: Boolean(password), passwordHash: password ? secretHash_(`room:${code}`, password) : '',
     players: [playerFromProfile_(profile, true)], roundNumber: 0, round: null,
-    deckOrder: [], deckCursor: 0, finalized: false, winnerIds: [], recentRequestIds: [],
+    deckOrder: [], deckCursor: 0, revision: 0, finalized: false, winnerIds: [], recentRequestIds: [],
   };
   const botCount = Math.min(Math.max(0, Number(payload.botCount || 0)), maxPlayers - 1);
   for (let index = 0; index < botCount; index += 1) room.players.push(botPlayer_(index));
@@ -347,24 +415,42 @@ function createRoom_(request, payload) {
   return { room: publicRoom_(room) };
 }
 
-function getRoom_(code) {
+function getRoom_(code, allowExpired) {
   const normalized = String(code || '').trim().toUpperCase();
+  const cache = CacheService.getScriptCache();
+  const cacheKey = `room:${normalized}`;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    try {
+      const cachedRoom = JSON.parse(cached);
+      if (allowExpired || Number(cachedRoom.expiresAt || 0) >= Date.now()) return cachedRoom;
+      cache.remove(cacheKey);
+    } catch (_) { cache.remove(cacheKey); }
+  }
   const row = rows_('ROOMS').find((item) => String(item.code) === normalized);
   if (!row) throw new Error('Sala não encontrada.');
   let room;
   try { room = JSON.parse(row.stateJson); }
   catch (_) { throw new Error('Os dados desta sala estão corrompidos.'); }
   room._row = row._row;
-  if (Number(room.expiresAt || 0) < Date.now()) throw new Error('Essa sala expirou. Crie uma nova.');
+  if (!allowExpired && Number(room.expiresAt || 0) < Date.now()) throw new Error('Essa sala expirou. Crie uma nova.');
+  cache.put(cacheKey, JSON.stringify(room), CACHE_SECONDS);
   return room;
 }
 
 function saveRoom_(room) {
+  room.revision = Number(room.revision || 0) + 1;
   room.updatedAt = Date.now();
   room.expiresAt = Math.max(Number(room.expiresAt || 0), Date.now() + ROOM_TTL_MS);
   const row = room._row || null;
   const stored = { code: room.code, stateJson: JSON.stringify(stripInternalRoom_(room)), updatedAt: room.updatedAt, expiresAt: room.expiresAt };
-  if (row) writeRow_('ROOMS', row, stored); else append_('ROOMS', stored);
+  if (row) {
+    CacheService.getScriptCache().put(`room:${room.code}`, JSON.stringify(room), CACHE_SECONDS);
+    writeRow_('ROOMS', row, stored);
+  } else {
+    room._row = append_('ROOMS', stored);
+    CacheService.getScriptCache().put(`room:${room.code}`, JSON.stringify(room), CACHE_SECONDS);
+  }
 }
 
 function stripInternalRoom_(room) {
@@ -515,6 +601,7 @@ function startGame_(request, payload) {
   room.players.forEach((player) => {
     player.score = 0; player.cardCount = 0; player.remaining = 0;
     player.penaltyCards = 0; player.penaltyUntil = 0; player.currentStreak = 0;
+    player.matchBestStreak = 0;
     player.pile = []; player.handCount = 0; player.topCardId = null;
   });
   if (room.mode === 'well') {
@@ -603,7 +690,8 @@ function prepareRound_(room, firstRound) {
     });
   }
 
-  const revealAt = Date.now() + (firstRound ? 3500 : 700);
+  const roundPreparedAt = Date.now();
+  const revealAt = roundPreparedAt + (firstRound ? FIRST_ROUND_LEAD_MS : NEXT_ROUND_LEAD_MS);
 
   room.round = {
     id: `${room.code}_${room.roundNumber}_${room.potatoStep || 0}_${Utilities.getUuid()}`,
@@ -614,7 +702,7 @@ function prepareRound_(room, firstRound) {
     targetIds,
     eligiblePlayerIds,
     isTiebreak: Boolean(room.isTiebreak),
-    claimedBy: '', claimedAt: 0, locked: false, nextAt: 0, revealAt, startedAt: Date.now(),
+    claimedBy: '', claimedAt: 0, locked: false, nextAt: 0, revealAt, startedAt: roundPreparedAt,
     botClaimAt: room.players.some((player) => player.bot && eligiblePlayerIds.indexOf(String(player.id)) >= 0) ? revealAt + 2400 + Math.floor(Math.random() * 2400) : 0,
   };
 }
@@ -690,35 +778,31 @@ function claim_(request, payload) {
     player.penaltyUntil = Date.now() + PENALTY_MS;
     player.currentStreak = 0;
     saveRoom_(room);
-    event_('MISS', room.code, profile.id, { roundId: room.round.id, symbolId: payload.symbolId, penaltyUntil: player.penaltyUntil });
     return { result: 'wrong', penaltyUntil: player.penaltyUntil, room: publicRoom_(room) };
   }
 
   room.round.locked = true;
   room.round.claimedBy = player.id;
   room.round.claimedAt = Date.now();
-  room.round.nextAt = Date.now() + 900;
+  room.round.nextAt = Date.now() + ROUND_RESULT_MS;
   player.score = Number(player.score || 0) + 1;
   player.currentStreak = Number(player.currentStreak || 0) + 1;
+  player.matchBestStreak = Math.max(Number(player.matchBestStreak || 0), player.currentStreak);
   applyWin_(room, player);
-  updateRoundStats_(profile, player.currentStreak);
   saveRoom_(room);
-  event_('CLAIM_WON', room.code, profile.id, {
-    roundId: room.round.id,
-    symbolId: expected,
-    clientSentAt: Number(payload.clientSentAt || 0),
-    serverReceivedAt: room.round.claimedAt,
-  });
   return { result: 'won', winnerName: player.name, room: publicRoom_(room) };
 }
 
 function applyWin_(room, player) {
   if (room.round && room.round.isTiebreak) return;
+  const moveId = `${room.round.id}:${player.id}:${room.round.claimedAt || Date.now()}`;
   if (room.mode === 'tower') {
+    room.lastMove = { id: moveId, cardId: room.centralCardId, fromZone: 'observed', toZone: 'player', fromPlayerId: '', toPlayerId: player.id };
     player.cardCount = Number(player.cardCount || 0) + 1;
     player.topCardId = room.centralCardId;
   } else if (room.mode === 'well') {
     const discarded = Array.isArray(player.pile) && player.pile.length ? player.pile.shift() : player.topCardId;
+    room.lastMove = { id: moveId, cardId: discarded, fromZone: 'player', toZone: 'observed', fromPlayerId: player.id, toPlayerId: '' };
     room.centralCardId = discarded;
     player.remaining = Array.isArray(player.pile) ? player.pile.length : Math.max(0, Number(player.remaining || 0) - 1);
     player.topCardId = Array.isArray(player.pile) && player.pile.length ? player.pile[0] : null;
@@ -727,6 +811,7 @@ function applyWin_(room, player) {
     const targetId = room.round.targetIds && room.round.targetIds[player.id];
     const target = room.players.find((entry) => String(entry.id) === String(targetId));
     if (target) {
+      room.lastMove = { id: moveId, cardId: player.topCardId, fromZone: 'player', toZone: 'player', fromPlayerId: player.id, toPlayerId: target.id };
       target.handCount = Number(target.handCount || 0) + Number(player.handCount || 0);
       target.topCardId = player.topCardId;
       player.handCount = 0;
@@ -736,18 +821,12 @@ function applyWin_(room, player) {
     const targetId = room.round.targetIds && room.round.targetIds[player.id];
     const target = room.players.find((entry) => entry.id === targetId) || room.players.find((entry) => entry.id !== player.id);
     if (target) {
+      room.lastMove = { id: moveId, cardId: room.centralCardId, fromZone: 'observed', toZone: 'player', fromPlayerId: '', toPlayerId: target.id };
       target.penaltyCards = Number(target.penaltyCards || 0) + 1;
       target.topCardId = room.centralCardId;
     }
     player.cardCount = Number(player.cardCount || 0) + 1;
   }
-}
-
-function updateRoundStats_(profileRow, streak) {
-  profileRow.roundWins = Number(profileRow.roundWins || 0) + 1;
-  profileRow.bestStreak = Math.max(Number(profileRow.bestStreak || 0), Number(streak || 0));
-  profileRow.lastSeenAt = Date.now();
-  writeRow_('PROFILES', profileRow._row, profileRow);
 }
 
 function maybeAdvanceRoom_(room) {
@@ -760,11 +839,11 @@ function maybeAdvanceRoom_(room) {
       room.round.locked = true;
       room.round.claimedBy = bot.id;
       room.round.claimedAt = Date.now();
-      room.round.nextAt = Date.now() + 900;
+      room.round.nextAt = Date.now() + ROUND_RESULT_MS;
       bot.score = Number(bot.score || 0) + 1;
       bot.currentStreak = Number(bot.currentStreak || 0) + 1;
+      bot.matchBestStreak = Math.max(Number(bot.matchBestStreak || 0), bot.currentStreak);
       applyWin_(room, bot);
-      event_('BOT_CLAIM_WON', room.code, bot.id, { roundId: room.round.id });
       saveRoom_(room);
     }
   }
@@ -842,8 +921,10 @@ function finishRoom_(room, forcedWinnerId) {
     if (!profile) return;
     profile.games = Number(profile.games || 0) + 1;
     if (room.winnerIds.indexOf(String(player.id)) >= 0) profile.wins = Number(profile.wins || 0) + 1;
+    profile.roundWins = Number(profile.roundWins || 0) + Number(player.score || 0);
+    profile.bestStreak = Math.max(Number(profile.bestStreak || 0), Number(player.matchBestStreak || 0));
     profile.lastSeenAt = Date.now();
-    writeRow_('PROFILES', profile._row, profile);
+    saveProfile_(profile);
   });
 
   append_('MATCHES', {
@@ -857,13 +938,115 @@ function finishRoom_(room, forcedWinnerId) {
 function readRoom_(request, payload) {
   requireProfile_(request);
   let room = getRoom_(payload.code);
-  room = maybeAdvanceRoom_(room);
+  if (roomNeedsAdvance_(room)) {
+    return withLock_(() => {
+      let current = getRoom_(payload.code);
+      current = maybeAdvanceRoom_(current);
+      if (!current.players.some((player) => String(player.id) === String(request.profileId))) throw new Error('Você não está nesta sala.');
+      return { room: publicRoom_(current) };
+    });
+  }
   if (!room.players.some((player) => String(player.id) === String(request.profileId))) throw new Error('Você não está nesta sala.');
   return { room: publicRoom_(room) };
 }
 
+function roomNeedsAdvance_(room) {
+  if (!room || room.status !== 'active' || !room.round) return false;
+  const timestamp = Date.now();
+  if (room.round.locked) return Number(room.round.nextAt || 0) <= timestamp;
+  return Number(room.round.revealAt || 0) <= timestamp && Number(room.round.botClaimAt || 0) > 0 && Number(room.round.botClaimAt || 0) <= timestamp;
+}
+
+function requireAdmin_(request) {
+  const profile = requireProfile_(request);
+  if (String(profile.id) !== ADMIN_PROFILE_ID) throw new Error('Apenas o administrador pode fazer isso.');
+  return profile;
+}
+
+function adminPlayers_(request) {
+  requireAdmin_(request);
+  const players = rows_('PROFILES').map(profileFromRow_)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return { players };
+}
+
+function adminRooms_(request) {
+  requireAdmin_(request);
+  const cache = CacheService.getScriptCache();
+  const timestamp = Date.now();
+  const rooms = rows_('ROOMS').map((row) => {
+    let room = null;
+    const cached = cache.get(`room:${row.code}`);
+    try { room = cached ? JSON.parse(cached) : JSON.parse(row.stateJson); } catch (_) { room = null; }
+    if (!room || ['lobby', 'active'].indexOf(room.status) < 0) return null;
+    return {
+      code: room.code,
+      mode: room.mode,
+      status: room.status,
+      playerCount: Array.isArray(room.players) ? room.players.length : 0,
+      hostName: room.players && room.players.find((player) => String(player.id) === String(room.hostId))?.name || 'Sem anfitrião',
+      expired: Number(room.expiresAt || 0) < timestamp,
+      updatedAt: Number(room.updatedAt || 0),
+    };
+  }).filter(Boolean).sort((a, b) => b.updatedAt - a.updatedAt);
+  return { rooms };
+}
+
+function adminResetPin_(request, payload) {
+  requireAdmin_(request);
+  const playerId = String(payload.playerId || '');
+  const row = findProfile_(playerId);
+  if (!row) throw new Error('Jogador não encontrado.');
+  row.pinHash = secretHash_(`profile:${row.id}`, '1234');
+  row.tokenHash = tokenHash_(randomToken_());
+  row.lastSeenAt = Date.now();
+  saveProfile_(row);
+  return { player: profileFromRow_(row), temporaryPin: '1234' };
+}
+
+function adminDeletePlayer_(request, payload) {
+  requireAdmin_(request);
+  const playerId = String(payload.playerId || '');
+  if (playerId === ADMIN_PROFILE_ID) throw new Error('O perfil administrador não pode ser excluído.');
+  const profileRows = rows_('PROFILES');
+  const row = profileRows.find((entry) => String(entry.id) === playerId);
+  if (!row) throw new Error('Jogador não encontrado.');
+  rows_('ROOMS').forEach((roomRow) => {
+    let gameRoom;
+    try { gameRoom = getRoom_(roomRow.code, true); } catch (_) { gameRoom = null; }
+    if (!gameRoom || !gameRoom.players?.some((player) => String(player.id) === playerId)) return;
+    gameRoom.players = gameRoom.players.filter((player) => String(player.id) !== playerId);
+    if (!gameRoom.players.length || String(gameRoom.hostId) === playerId) {
+      gameRoom.status = 'closed';
+      gameRoom.closedAt = Date.now();
+      gameRoom.round = null;
+    }
+    saveRoom_(gameRoom);
+  });
+  sheet_('PROFILES').deleteRow(row._row);
+  CacheService.getScriptCache().removeAll(profileRows.map((entry) => profileCacheKey_(entry.id)));
+  return { deleted: true, playerId };
+}
+
+function adminCloseRoom_(request, payload) {
+  requireAdmin_(request);
+  const room = getRoom_(payload.code, true);
+  room.status = 'closed';
+  room.closedAt = Date.now();
+  room.round = null;
+  saveRoom_(room);
+  event_('ROOM_CLOSED_BY_ADMIN', room.code, ADMIN_PROFILE_ID, {});
+  return { room: publicRoom_(room) };
+}
+
 function ranking_() {
-  const ranking = rows_('PROFILES').map(profileFromRow_).sort((a, b) => b.wins - a.wins || b.games - a.games).slice(0, 100);
+  const unique = {};
+  rows_('PROFILES').map(profileFromRow_).forEach((profile) => {
+    const key = normalizedName_(profile.name);
+    const current = unique[key];
+    if (!current || profile.wins > current.wins || (profile.wins === current.wins && profile.games > current.games)) unique[key] = profile;
+  });
+  const ranking = Object.keys(unique).map((key) => unique[key]).sort((a, b) => b.wins - a.wins || b.games - a.games).slice(0, 100);
   return { ranking };
 }
 

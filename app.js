@@ -5,7 +5,7 @@
   const ACTIVE_POLL_MS = 250;
   const LOBBY_POLL_MS = 500;
   const PENALTY_MS = 3000;
-  const ASSET_VERSION = "9";
+  const ASSET_VERSION = "10";
   const THEME_ROOT = "themes/letters-numbers";
   const SYNC_URL = String(window.PONTO_CONFIG?.appsScriptUrl || "https://script.google.com/macros/s/AKfycbxMNe2tp1R0D0IaPxm4OemPqfO2WwIVX9ghnlU47vJw2v8mWKjoq5_Nb4InpIwXVpU/exec").trim().replace(/\/+$/, "");
   const ADMIN_PROFILE_ID = "admin_lincoln";
@@ -65,7 +65,7 @@
     },
   ];
 
-  const AVATARS = ["🦊", "🐯", "🐸", "🦄", "🐼", "🦁", "🐨", "🐲", "🦋", "😎", "🐶", "🐱"];
+  const AVATARS = ["🦊", "🐯", "🐸", "🦄", "🐼", "🦁", "🐨", "🐲", "👽", "😎", "🐶", "🐱"];
   const BOT_NAMES = ["Bia", "Caio", "Malu", "Nina", "Theo", "Zeca", "Iara"];
   const SYMBOL_LABELS = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", ..."ABCDEFGHIJKLMNOPQRSTU"];
   const CARD_LAYOUT = [
@@ -212,6 +212,9 @@
   let roundRevealTimer = 0;
   let roundRevealReadyId = "";
   let selectedTargetId = "";
+  let lastAnimatedMoveId = "";
+  let pendingRegistration = null;
+  let deferredInstallPrompt = null;
   let audioContext = null;
 
   function saveState() {
@@ -459,18 +462,53 @@
   function showActivity(title = "Entrando na sala…", detail = "Sincronizando jogadores e partida.") {
     $("#activityTitle").textContent = title;
     $("#activityDetail").textContent = detail;
+    $("#activityOverlay").classList.remove("is-success", "is-late", "is-error");
     $("#activityOverlay").hidden = false;
+  }
+
+  function showActivityResult(title, detail, status = "success") {
+    $("#activityTitle").textContent = title;
+    $("#activityDetail").textContent = detail;
+    $("#activityOverlay").classList.remove("is-success", "is-late", "is-error");
+    $("#activityOverlay").classList.add(`is-${status}`);
   }
 
   function hideActivity() {
     $("#activityOverlay").hidden = true;
   }
 
+  function applyAuthenticatedProfile(result, pin) {
+    if (!result?.profile || !result.token) throw new Error("O servidor não devolveu o perfil corretamente.");
+    state.profile = {
+      ...state.profile,
+      ...result.profile,
+      token: result.token,
+      pinHash: "",
+      isAdmin: result.profile.isAdmin === true,
+    };
+    return hashPinFor(state.profile.id, pin).then((pinHash) => {
+      state.profile.pinHash = pinHash;
+      setSessionPin(pin);
+      saveState();
+      rankingCache = null;
+      renderProfile();
+      renderSyncStatus();
+    });
+  }
+
+  function openAuthDialog() {
+    $("#authNameInput").value = state.profile.name === "Jogador" ? "" : state.profile.name;
+    $("#authPinInput").value = "";
+    $("#authError").hidden = true;
+    if (!$("#authDialog").open) $("#authDialog").showModal();
+    setTimeout(() => $("#authNameInput").focus(), 80);
+  }
+
   async function ensureRemoteProfile(forceUpdate = false) {
     if (!state.syncUrl) return;
     if (state.profile.token && !forceUpdate) return;
     const pin = sessionPin();
-    if (!state.profile.token && !/^\d{3}$/.test(pin)) throw new Error("Salve o perfil com uma senha de 3 números antes de conectar.");
+    if (!state.profile.token && !/^\d{3,4}$/.test(pin)) throw new Error("Entre ou cadastre um perfil antes de conectar.");
     try {
       const result = await api(state.profile.token ? "updateProfile" : "createProfile", {
         id: state.profile.id,
@@ -484,7 +522,7 @@
       if (state.profile.token) {
         state.profile.token = "";
         saveState();
-        if (!/^\d{3}$/.test(pin)) throw new Error("Digite novamente a senha de 3 números no perfil.");
+        if (!/^\d{3,4}$/.test(pin)) throw new Error("Entre novamente com seu nome e senha.");
         const result = await api("createProfile", { id: state.profile.id, name: state.profile.name, avatar: state.profile.avatar, pin });
         if (result.profile) Object.assign(state.profile, result.profile, { token: result.token || "" });
         saveState();
@@ -977,11 +1015,62 @@
     return room.round?.observedCardIds?.[playerId] ?? room.round?.observedCardId;
   }
 
+  function captureCardTransfer(move) {
+    if (!move?.id || move.id === lastAnimatedMoveId) return null;
+    let sourceId = "";
+    let targetId = "";
+    if (move.fromZone === "observed" && move.toZone === "player" && String(move.toPlayerId) === String(state.profile.id)) {
+      sourceId = "observedCard";
+      targetId = "playerCard";
+    } else if (move.fromZone === "player" && move.toZone === "observed" && String(move.fromPlayerId) === String(state.profile.id)) {
+      sourceId = "playerCard";
+      targetId = "observedCard";
+    } else if (move.fromZone === "player" && move.toZone === "player") {
+      if (String(move.toPlayerId) === String(state.profile.id)) {
+        sourceId = "observedCard";
+        targetId = "playerCard";
+      } else if (String(move.fromPlayerId) === String(state.profile.id)) {
+        sourceId = "playerCard";
+        targetId = "observedCard";
+      }
+    }
+    lastAnimatedMoveId = move.id;
+    if (!sourceId || !targetId) return null;
+    const source = $(`#${sourceId}`);
+    const sourceRect = source?.getBoundingClientRect();
+    if (!source || !sourceRect?.width || String(source.dataset.cardId) !== String(move.cardId)) return null;
+    const clone = source.cloneNode(true);
+    clone.removeAttribute("id");
+    clone.removeAttribute("aria-label");
+    clone.className = "game-card card-transfer-clone";
+    clone.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+    Object.assign(clone.style, {
+      left: `${sourceRect.left}px`,
+      top: `${sourceRect.top}px`,
+      width: `${sourceRect.width}px`,
+      height: `${sourceRect.height}px`,
+    });
+    document.body.appendChild(clone);
+    return { clone, targetId };
+  }
+
+  function playCardTransfer(transfer) {
+    if (!transfer?.clone) return;
+    const targetRect = $(`#${transfer.targetId}`)?.getBoundingClientRect();
+    if (!targetRect?.width) return transfer.clone.remove();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      transfer.clone.style.transform = `translate(${targetRect.left - parseFloat(transfer.clone.style.left)}px, ${targetRect.top - parseFloat(transfer.clone.style.top)}px) scale(${targetRect.width / parseFloat(transfer.clone.style.width)})`;
+      transfer.clone.classList.add("is-moving");
+    }));
+    setTimeout(() => transfer.clone.remove(), 720);
+  }
+
   function renderGame(force = false) {
     if (!room?.round) return;
     const player = currentPlayer();
     const mode = modeById(room.mode);
     const roundChanged = lastRenderedRound !== room.round.id;
+    const cardTransfer = roundChanged ? captureCardTransfer(room.lastMove) : null;
     if (roundChanged) selectedTargetId = "";
     const selectedTarget = selectedTargetForRoom();
     $("#gameModeTitle").textContent = mode.title;
@@ -1022,6 +1111,7 @@
         $("#observedCard").classList.remove("is-concealed");
         $("#playerCard").classList.remove("is-concealed");
       }
+      playCardTransfer(cardTransfer);
     }
   }
 
@@ -1080,7 +1170,8 @@
   function updatePenaltyCover() {
     if (!room) return;
     const player = currentPlayer();
-    const remaining = Math.max(0, Number(player?.penaltyUntil || 0) - now());
+    const clockNow = room.transport === "remote" ? serverNow() : now();
+    const remaining = Math.max(0, Number(player?.penaltyUntil || 0) - clockNow);
     if (remaining <= 0) {
       clearInterval(penaltyTimer);
       if (!claimPending && !room.round?.locked && roundRevealReadyId === room.round?.id) setCardButtonsDisabled(false);
@@ -1095,13 +1186,46 @@
     if (!room?.round || room.status !== "active" || claimPending || room.round.locked || roundRevealReadyId !== room.round.id) return;
     if (Array.isArray(room.round.eligiblePlayerIds) && !room.round.eligiblePlayerIds.includes(state.profile.id)) return;
     const player = currentPlayer();
-    if (Number(player?.penaltyUntil || 0) > now()) return;
+    const clockNow = room.transport === "remote" ? serverNow() : now();
+    if (Number(player?.penaltyUntil || 0) > clockNow) return;
+    const selectedTarget = selectedTargetForRoom();
+    const observedCardId = observedCardFor();
+    const playerCardId = room.mode === "gift" && !room.round.isTiebreak ? selectedTarget?.topCardId : room.round.playerCardIds?.[state.profile.id];
+    const expectedSymbol = commonSymbol(observedCardId, playerCardId);
+    if (Number(symbolId) !== Number(expectedSymbol)) {
+      player.penaltyUntil = clockNow + PENALTY_MS;
+      player.currentStreak = 0;
+      currentStreak = 0;
+      showFeedback("ERROU — 3 SEGUNDOS!", true, 1200);
+      playTone("wrong");
+      vibrate(35);
+      updatePenaltyCover();
+      if (room.transport === "remote") {
+        const missRoomId = room.round.id;
+        api("claim", {
+          code: room.code,
+          roundId: missRoomId,
+          symbolId: Number(symbolId),
+          requestId: uid("miss"),
+          clientSentAt: now(),
+          targetId: selectedTarget?.id || "",
+        }, { timeout: 7000, silent: true }).then((result) => {
+          if (room?.round?.id === missRoomId && result.room) {
+            acceptRemoteRoom(result.room, true);
+            renderGame();
+            updatePenaltyCover();
+          }
+        }).catch(() => {});
+      }
+      return;
+    }
     claimPending = true;
     setCardButtonsDisabled(true);
     vibrate(14);
 
     try {
       if (room.transport === "remote") {
+        showActivity("Aguarde…", "Confirmando quem tocou primeiro.");
         const result = await api("claim", {
           code: room.code,
           roundId: room.round.id,
@@ -1113,11 +1237,13 @@
         acceptRemoteRoom(result.room, true);
         if (result.result === "notReady") {
           claimPending = false;
+          hideActivity();
           scheduleRoundReveal();
         } else if (result.result === "wrong") {
           claimPending = false;
           currentStreak = 0;
-          showFeedback("ERROU — 3 SEGUNDOS!", true, 1200);
+          showActivityResult("ERROU!", "Você ficará 3 segundos sem tocar.", "error");
+          setTimeout(hideActivity, 850);
           playTone("wrong");
           renderGame();
           updatePenaltyCover();
@@ -1126,12 +1252,14 @@
           state.profile.roundWins += 1;
           state.profile.bestStreak = Math.max(state.profile.bestStreak, currentStreak);
           saveState();
-          showFeedback(room.mode === "potato" && !room.round?.isTiebreak ? "VOCÊ PASSOU AS CARTAS!" : "VOCÊ FOI PRIMEIRO!", false, 900);
+          showActivityResult(room.mode === "potato" && !room.round?.isTiebreak ? "VOCÊ PASSOU AS CARTAS!" : "VOCÊ FOI PRIMEIRO!", "Jogada confirmada pelo servidor.", "success");
+          setTimeout(hideActivity, 900);
           playTone("win");
           vibrate([35, 35, 70]);
         } else {
           currentStreak = 0;
-          showFeedback(result.winnerName ? `${result.winnerName.toUpperCase()} FOI PRIMEIRO` : "RODADA ENCERRADA", true, 900);
+          showActivityResult(result.winnerName ? `${result.winnerName.toUpperCase()} FOI PRIMEIRO` : "RODADA ENCERRADA", "A próxima rodada começará em instantes.", "late");
+          setTimeout(hideActivity, 900);
           playTone("late");
         }
         renderGame();
@@ -1140,6 +1268,7 @@
       }
     } catch (error) {
       claimPending = false;
+      hideActivity();
       setCardButtonsDisabled(false);
       toast(error.message, "error");
     }
@@ -1197,11 +1326,14 @@
   function applyRoundWin(player) {
     player.score += 1;
     if (room.round?.isTiebreak) return;
+    const moveId = `${room.round.id}:${player.id}:${room.round.claimedAt || now()}`;
     if (room.mode === "tower") {
+      room.lastMove = { id: moveId, cardId: room.centralCardId, fromZone: "observed", toZone: "player", fromPlayerId: "", toPlayerId: player.id };
       player.cardCount += 1;
       player.topCardId = room.centralCardId;
     } else if (room.mode === "well") {
       const discarded = player.pile.shift();
+      room.lastMove = { id: moveId, cardId: discarded, fromZone: "player", toZone: "observed", fromPlayerId: player.id, toPlayerId: "" };
       room.centralCardId = discarded;
       player.remaining = player.pile.length;
       player.topCardId = player.pile[0] ?? null;
@@ -1210,6 +1342,7 @@
       const targetId = room.round.targetIds?.[player.id];
       const target = room.players.find((entry) => entry.id === targetId);
       if (target) {
+        room.lastMove = { id: moveId, cardId: player.topCardId, fromZone: "player", toZone: "player", fromPlayerId: player.id, toPlayerId: target.id };
         target.handCount = Number(target.handCount || 0) + Number(player.handCount || 0);
         target.topCardId = player.topCardId;
         player.handCount = 0;
@@ -1219,6 +1352,7 @@
       const targetId = room.round.targetIds?.[player.id] || room.round.targetId;
       const target = room.players.find((entry) => entry.id === targetId) || room.players.find((entry) => entry.id !== player.id);
       if (target) {
+        room.lastMove = { id: moveId, cardId: room.centralCardId, fromZone: "observed", toZone: "player", fromPlayerId: "", toPlayerId: target.id };
         target.penaltyCards += 1;
         target.topCardId = room.centralCardId;
       }
@@ -1370,7 +1504,6 @@
     $("#profileBadge").textContent = state.profile.avatar;
     $("#profileNavIcon").textContent = state.profile.avatar;
     $("#profileNameInput").value = state.profile.name;
-    $("#profilePinInput").value = "";
     $("#avatarPicker").innerHTML = AVATARS.map((avatar) => `<button type="button" class="avatar-choice${avatar === state.profile.avatar ? " is-selected" : ""}" data-avatar="${avatar}" aria-label="Avatar ${avatar}">${avatar}</button>`).join("");
     const winRate = state.profile.games ? Math.round(state.profile.wins / state.profile.games * 100) : 0;
     $("#profileStats").innerHTML = `
@@ -1474,6 +1607,44 @@
     updateSyncPill("online");
   }
 
+  async function showAdminPlayers() {
+    $("#adminListTitle").textContent = "Jogadores";
+    $("#adminListNote").textContent = "Gerencie cadastros e senhas temporárias.";
+    $("#adminListContent").innerHTML = '<div class="ranking-loading">Carregando…</div>';
+    if (!$("#adminListDialog").open) $("#adminListDialog").showModal();
+    try {
+      const result = await api("adminPlayers", {}, { timeout: 10000 });
+      $("#adminListContent").innerHTML = (result.players || []).map((player) => `
+        <div class="admin-list-row">
+          <span class="admin-list-avatar">${escapeHTML(player.avatar)}</span>
+          <div><strong>${escapeHTML(player.name)}</strong><small>${player.games} partidas · ${player.wins} vitórias</small></div>
+          <div class="admin-row-actions">
+            ${player.id === ADMIN_PROFILE_ID ? '<span class="admin-protected-label">Perfil protegido</span>' : `<button type="button" data-admin-reset-player="${escapeHTML(player.id)}">Senha 1234</button><button class="is-danger" type="button" data-admin-delete-player="${escapeHTML(player.id)}">Excluir</button>`}
+          </div>
+        </div>`).join("") || '<p class="empty-rooms">Nenhum jogador cadastrado.</p>';
+    } catch (error) {
+      $("#adminListContent").innerHTML = `<p class="empty-rooms">${escapeHTML(error.message)}</p>`;
+    }
+  }
+
+  async function showAdminRooms() {
+    $("#adminListTitle").textContent = "Salas abertas";
+    $("#adminListNote").textContent = "Inclusive salas expiradas ou fantasmas.";
+    $("#adminListContent").innerHTML = '<div class="ranking-loading">Carregando…</div>';
+    if (!$("#adminListDialog").open) $("#adminListDialog").showModal();
+    try {
+      const result = await api("adminRooms", {}, { timeout: 10000 });
+      $("#adminListContent").innerHTML = (result.rooms || []).map((entry) => `
+        <div class="admin-list-row">
+          <span class="admin-list-avatar">${entry.status === "active" ? "▶" : "#"}</span>
+          <div><strong>${escapeHTML(entry.code)} · ${escapeHTML(modeById(entry.mode).title)}</strong><small>${entry.playerCount} jogadores · ${escapeHTML(entry.hostName)}${entry.expired ? " · expirada" : ""}</small></div>
+          <div class="admin-row-actions"><button class="is-danger" type="button" data-admin-close-room="${escapeHTML(entry.code)}">Encerrar</button></div>
+        </div>`).join("") || '<p class="empty-rooms">Nenhuma sala aberta.</p>';
+    } catch (error) {
+      $("#adminListContent").innerHTML = `<p class="empty-rooms">${escapeHTML(error.message)}</p>`;
+    }
+  }
+
   function vibrate(pattern) {
     if (navigator.vibrate) navigator.vibrate(pattern);
   }
@@ -1508,7 +1679,7 @@
   }
 
   function bindEvents() {
-    document.addEventListener("click", (event) => {
+    document.addEventListener("click", async (event) => {
       const go = event.target.closest("[data-go]");
       if (go) {
         const roomAction = go.dataset.roomAction;
@@ -1556,6 +1727,29 @@
       }
       const removeBotButton = event.target.closest("[data-remove-bot]");
       if (removeBotButton) removeTrainingPlayer(removeBotButton.dataset.removeBot);
+      const resetPlayerButton = event.target.closest("[data-admin-reset-player]");
+      if (resetPlayerButton) {
+        try {
+          await api("adminResetPin", { playerId: resetPlayerButton.dataset.adminResetPlayer }, { timeout: 10000 });
+          toast("Senha redefinida para 1234.", "good");
+        } catch (error) { toast(error.message, "error"); }
+      }
+      const deletePlayerButton = event.target.closest("[data-admin-delete-player]");
+      if (deletePlayerButton && confirm("Excluir este jogador e encerrar as salas dele?")) {
+        try {
+          await api("adminDeletePlayer", { playerId: deletePlayerButton.dataset.adminDeletePlayer }, { timeout: 12000 });
+          toast("Jogador excluído.", "good");
+          showAdminPlayers();
+        } catch (error) { toast(error.message, "error"); }
+      }
+      const closeAdminRoomButton = event.target.closest("[data-admin-close-room]");
+      if (closeAdminRoomButton && confirm(`Encerrar a sala ${closeAdminRoomButton.dataset.adminCloseRoom}?`)) {
+        try {
+          await api("adminCloseRoom", { code: closeAdminRoomButton.dataset.adminCloseRoom }, { timeout: 10000 });
+          toast("Sala encerrada.", "good");
+          showAdminRooms();
+        } catch (error) { toast(error.message, "error"); }
+      }
     });
 
     $("#quickPlayBtn").addEventListener("click", () => createRoom({ modeId: "tower", maxPlayers: 4, roundsPreset: "8", quick: true, botCount: 3 }));
@@ -1586,27 +1780,130 @@
     $("#refreshRoomsBtn").addEventListener("click", refreshOpenRooms);
     $("#leaveGameBtn").addEventListener("click", leaveCurrentRoom);
     $("#soundBtn").addEventListener("click", () => { state.sound = !state.sound; saveState(); renderGame(); });
+    $("#listPlayersBtn").addEventListener("click", showAdminPlayers);
+    $("#listRoomsBtn").addEventListener("click", showAdminRooms);
+    $("#adminListCloseBtn").addEventListener("click", () => $("#adminListDialog").close());
 
     $("#profileForm").addEventListener("submit", async (event) => {
       event.preventDefault();
-      const pin = $("#profilePinInput").value.trim();
-      if (!/^\d{3}$/.test(pin)) return toast("A senha do perfil deve ter exatamente 3 números.", "error");
-      state.profile.name = $("#profileNameInput").value.trim().slice(0, 18) || "Jogador";
-      state.profile.pinHash = await hashPin(pin);
-      setSessionPin(pin);
-      saveState();
-      renderProfile();
-      if (state.syncUrl) {
-        try {
-          await ensureRemoteProfile(true);
-          toast("Perfil salvo e protegido.", "good");
-        }
-        catch (error) { toast(error.message, "error"); }
-      } else toast("Perfil salvo e protegido neste aparelho.", "good");
+      const previousName = state.profile.name;
+      state.profile.name = $("#profileNameInput").value.trim().slice(0, 18) || previousName;
+      try {
+        const result = await api("updateProfile", { name: state.profile.name, avatar: state.profile.avatar }, { timeout: 9000 });
+        if (result.profile) Object.assign(state.profile, result.profile);
+        saveState();
+        renderProfile();
+        toast("Perfil atualizado.", "good");
+      } catch (error) {
+        state.profile.name = previousName;
+        renderProfile();
+        toast(error.message, "error");
+      }
     });
 
-    [$("#profilePinInput"), $("#pinUnlockInput"), $("#adminPinInput"), $("#roomPasswordCreate"), $("#roomPasswordJoin")].forEach((input) => {
+    [$("#authPinInput"), $("#registerConfirmPin"), $("#currentPinInput"), $("#newPinInput"), $("#confirmNewPinInput"), $("#pinUnlockInput"), $("#adminPinInput"), $("#roomPasswordCreate"), $("#roomPasswordJoin")].forEach((input) => {
       input.addEventListener("input", () => { input.value = input.value.replace(/\D/g, ""); });
+    });
+
+    $("#authForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const name = $("#authNameInput").value.trim();
+      const pin = $("#authPinInput").value;
+      if (!name || !/^\d{3,4}$/.test(pin)) return;
+      $("#authError").hidden = true;
+      $("#authDialog").close();
+      showActivity("Entrando…", "Abrindo seu perfil.");
+      try {
+        const result = await api("loginProfile", { name, pin }, { timeout: 10000, silent: true });
+        await applyAuthenticatedProfile(result, pin);
+        hideActivity();
+        toast(`Olá, ${state.profile.name}!`, "good");
+      } catch (error) {
+        hideActivity();
+        openAuthDialog();
+        $("#authError").textContent = error.message;
+        $("#authError").hidden = false;
+      }
+    });
+    $("#registerBtn").addEventListener("click", () => {
+      const name = $("#authNameInput").value.trim();
+      const pin = $("#authPinInput").value;
+      $("#authError").hidden = true;
+      if (!name) {
+        $("#authError").textContent = "Digite o nome do jogador.";
+        $("#authError").hidden = false;
+        return;
+      }
+      if (!/^\d{4}$/.test(pin)) {
+        $("#authError").textContent = "A senha nova deve ter exatamente 4 números.";
+        $("#authError").hidden = false;
+        return;
+      }
+      pendingRegistration = { name, pin };
+      $("#registerConfirmPin").value = "";
+      $("#registerError").hidden = true;
+      $("#authDialog").close();
+      $("#registerConfirmDialog").showModal();
+      setTimeout(() => $("#registerConfirmPin").focus(), 80);
+    });
+    $("#registerCancelBtn").addEventListener("click", () => {
+      $("#registerConfirmDialog").close();
+      openAuthDialog();
+    });
+    $("#registerConfirmForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const confirmation = $("#registerConfirmPin").value;
+      if (!pendingRegistration || confirmation !== pendingRegistration.pin) {
+        $("#registerError").textContent = "As duas senhas não são iguais.";
+        $("#registerError").hidden = false;
+        return;
+      }
+      $("#registerConfirmDialog").close();
+      showActivity("Cadastrando…", "Criando seu perfil único.");
+      try {
+        const profileId = uid("player");
+        const result = await api("createProfile", { id: profileId, name: pendingRegistration.name, avatar: AVATARS[0], pin: pendingRegistration.pin }, { timeout: 10000, silent: true });
+        await applyAuthenticatedProfile(result, pendingRegistration.pin);
+        pendingRegistration = null;
+        hideActivity();
+        toast("Perfil cadastrado.", "good");
+      } catch (error) {
+        hideActivity();
+        $("#registerConfirmDialog").showModal();
+        $("#registerError").textContent = error.message;
+        $("#registerError").hidden = false;
+      }
+    });
+    [$("#authDialog"), $("#registerConfirmDialog")].forEach((dialog) => dialog.addEventListener("cancel", (event) => event.preventDefault()));
+
+    $("#changePinBtn").addEventListener("click", () => {
+      [$("#currentPinInput"), $("#newPinInput"), $("#confirmNewPinInput")].forEach((input) => { input.value = ""; });
+      $("#changePinError").hidden = true;
+      $("#changePinDialog").showModal();
+      setTimeout(() => $("#currentPinInput").focus(), 80);
+    });
+    $("#changePinCancelBtn").addEventListener("click", () => $("#changePinDialog").close());
+    $("#changePinForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const currentPin = $("#currentPinInput").value;
+      const newPin = $("#newPinInput").value;
+      const confirmation = $("#confirmNewPinInput").value;
+      if (!/^\d{4}$/.test(newPin) || newPin !== confirmation) {
+        $("#changePinError").textContent = "A nova senha deve ter 4 números e ser repetida corretamente.";
+        $("#changePinError").hidden = false;
+        return;
+      }
+      try {
+        await api("changePin", { currentPin, newPin }, { timeout: 9000 });
+        state.profile.pinHash = await hashPin(newPin);
+        setSessionPin(newPin);
+        saveState();
+        $("#changePinDialog").close();
+        toast("Senha alterada.", "good");
+      } catch (error) {
+        $("#changePinError").textContent = error.message;
+        $("#changePinError").hidden = false;
+      }
     });
     $("#pinUnlockForm").addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -1651,6 +1948,30 @@
     });
     $("#closeResultBtn").addEventListener("click", () => { $("#resultDialog").close(); showScreen("home"); });
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && room?.transport === "remote") startPolling(); });
+    window.addEventListener("beforeinstallprompt", (event) => {
+      event.preventDefault();
+      deferredInstallPrompt = event;
+      $("#installAppBtn").classList.add("is-ready");
+    });
+    window.addEventListener("appinstalled", () => {
+      deferredInstallPrompt = null;
+      $("#installAppBtn").hidden = true;
+      toast("PONTO! instalado.", "good");
+    });
+    $("#installAppBtn").addEventListener("click", async () => {
+      if (window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true) {
+        toast("O PONTO! já está instalado.", "good");
+        return;
+      }
+      if (!deferredInstallPrompt) {
+        toast("No iPhone, use Compartilhar → Adicionar à Tela de Início.");
+        return;
+      }
+      deferredInstallPrompt.prompt();
+      const choice = await deferredInstallPrompt.userChoice;
+      if (choice.outcome === "accepted") $("#installAppBtn").hidden = true;
+      deferredInstallPrompt = null;
+    });
   }
 
   function init() {
@@ -1659,11 +1980,11 @@
     renderProfile();
     renderSyncStatus();
     bindEvents();
-    setRoomTab("create");
+    setRoomTab("join");
     showScreen("home");
-    showProfileLockIfNeeded();
+    openAuthDialog();
     api("status", {}, { timeout: 10000 })
-      .then((status) => { if (Number(status.version || 0) < 4) updateSyncPill("busy", "Atualize o Code.gs"); })
+      .then((status) => { if (Number(status.version || 0) < 6) updateSyncPill("busy", "Atualize o Code.gs"); })
       .catch(() => updateSyncPill("demo", "Reconectando…"));
     if (!validateDeck()) console.error("Falha na validação matemática do baralho.");
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {

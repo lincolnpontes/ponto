@@ -1,7 +1,7 @@
-const CACHE = "ponto-v9";
+const CACHE = "ponto-v10";
 const CORE = [
-  "./", "index.html", "style.css?v=9", "config.js?v=9", "app.js?v=9", "manifest.json?v=9",
-  "icon-192.png", "icon-512.png", "themes/letters-numbers/theme.json?v=9"
+  "./", "index.html", "style.css?v=10", "config.js?v=10", "app.js?v=10", "manifest.json?v=10",
+  "icon-192.png", "icon-512.png", "themes/letters-numbers/theme.json?v=10"
 ];
 
 self.addEventListener("install", (event) => {
