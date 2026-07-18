@@ -26,7 +26,7 @@
       <button class="brand" data-go="home" aria-label="Ir para o início">
         <span class="brand-dot"></span><span>PONTO!</span>
       </button>
-      <button class="sync-pill" id="syncPill" data-go="settings" aria-label="Abrir sincronização">
+      <button class="sync-pill" id="syncPill" data-go="profile" aria-label="Abrir perfil">
         <span class="sync-light"></span>
         <span id="syncPillText">Modo demonstração</span>
       </button>
@@ -57,14 +57,8 @@
           </div>
         </div>
 
-        <div class="compact-proof" aria-label="Recursos principais">
-          <div><strong>0,25s</strong><span>atualização ativa</span></div>
-          <div><strong>3s</strong><span>punição por erro</span></div>
-          <div><strong>4</strong><span>modos de jogo</span></div>
-        </div>
-
         <div class="section-heading">
-          <div><p class="eyebrow">ESCOLHA SUA BAGUNÇA</p><h2>Quatro jeitos de jogar</h2></div>
+          <div><h2>Quatro jeitos de jogar</h2></div>
           <button class="text-button" data-go="rules">Ver regras</button>
         </div>
         <div class="mode-rail" id="homeModeRail"></div>
@@ -96,7 +90,7 @@
                 <option value="8">8 jogadores</option>
               </select>
             </label>
-            <label class="field"><span>Rodadas</span>
+            <label class="field"><span>Duração</span>
               <select id="roundsInput">
                 <option value="8">Rápida · 8</option>
                 <option value="16" selected>Clássica · 16</option>
@@ -105,6 +99,7 @@
               </select>
             </label>
           </div>
+          <p class="duration-hint">No modo completo são até 55 rodadas. O Poço termina assim que alguém fica sem cartas.</p>
           <label class="field optional-password"><span>Senha da sala <small>opcional</small></span>
             <input id="roomPasswordCreate" type="password" inputmode="numeric" pattern="[0-9]{3,8}" maxlength="8" placeholder="3 a 8 números" autocomplete="new-password">
           </label>
@@ -126,7 +121,7 @@
           <label class="field code-field"><span>Código</span>
             <input id="roomCodeInput" maxlength="5" inputmode="text" autocomplete="off" placeholder="P0NT0" required>
           </label>
-          <label class="field" id="joinPasswordField"><span>Senha <small>se a sala tiver</small></span>
+          <label class="field" id="joinPasswordField" hidden><span>Senha da sala selecionada</span>
             <input id="roomPasswordJoin" type="password" inputmode="numeric" pattern="[0-9]{3,8}" maxlength="8" placeholder="Senha numérica" autocomplete="current-password">
           </label>
           <button class="button button-primary button-big" type="submit">Entrar na sala <span>→</span></button>
@@ -155,17 +150,24 @@
         <div class="player-list" id="lobbyPlayers"></div>
         <button class="button button-paper add-bot-button" id="addTrainingPlayerBtn" type="button">＋ Adicionar jogador de treino</button>
         <button class="button button-primary button-big" id="startGameBtn">Começar partida <span>→</span></button>
+        <button class="text-button close-room-button" id="closeRoomBtn" type="button">Encerrar sala</button>
         <p class="host-hint" id="hostHint">Você é o anfitrião. A partida começa para todos ao mesmo tempo.</p>
       </section>
 
       <section class="screen game-screen" data-screen="game" aria-labelledby="gameModeTitle">
         <div class="game-topline">
-          <button class="round-icon-button" id="leaveGameBtn" aria-label="Sair da partida">×</button>
+          <button class="round-icon-button" id="leaveGameBtn" aria-label="Encerrar ou sair da partida">×</button>
           <div class="game-room-label"><span id="gameModeTitle">Torre do caos</span><small>Sala <b id="gameRoomCode">P0NT0</b></small></div>
           <button class="round-icon-button" id="soundBtn" aria-label="Ativar ou desativar som">♪</button>
         </div>
 
         <div class="score-strip" id="scoreStrip"></div>
+
+        <div class="round-ready-overlay" id="roundReadyOverlay" hidden>
+          <span>TODO MUNDO PRONTO?</span>
+          <strong id="roundReadyCount">3</strong>
+          <small>As cartas aparecem juntas.</small>
+        </div>
 
         <div class="card-zone observed-zone">
           <div class="card-label"><span id="observedLabel">CARTA CENTRAL</span><b id="roundCounter">1 / 12</b></div>
@@ -175,7 +177,7 @@
         <div class="match-divider" aria-hidden="true"><span></span><b>ACHE O IGUAL</b><span></span></div>
 
         <div class="card-zone player-zone">
-          <div class="card-label"><span>SUA CARTA</span><b id="playerCardCount">+0 cartas</b></div>
+          <div class="card-label"><span id="playerCardLabel">SUA CARTA</span><b id="playerCardCount">+0 cartas</b></div>
           <div class="game-card player-card" id="playerCard" aria-label="Sua carta"></div>
         </div>
 
@@ -198,7 +200,7 @@
 
       <section class="screen" data-screen="profile" aria-labelledby="profileTitle">
         <div class="page-heading no-back">
-          <div><p class="eyebrow">SEU JOGADOR</p><h1 id="profileTitle">Perfil & estatísticas</h1></div>
+          <div><h1 id="profileTitle">Perfil & estatísticas</h1></div>
           <div class="profile-badge" id="profileBadge">L</div>
         </div>
         <form id="profileForm" class="profile-form">
@@ -219,27 +221,26 @@
           <div class="achievement-icon">⚡</div>
           <div><span class="micro-label">MELHOR MARCA</span><strong id="bestStreakText">4 acertos seguidos</strong><small>Continue jogando para subir no ranking.</small></div>
         </div>
-        <button class="settings-link" data-go="settings"><span>⚙</span><div><b>Sincronização e ajustes</b><small>Google Apps Script, tema e conexão</small></div><span>→</span></button>
+        <div class="admin-access-card" id="adminAccessCard">
+          <span>🔐</span><div><b>Acesso do administrador</b><small>Somente Lincoln pode alterar configurações sensíveis.</small></div>
+          <button class="button button-paper" id="adminLoginBtn" type="button">Entrar</button>
+        </div>
+        <div class="admin-badge-card" id="adminBadgeCard" hidden><span>🛡️</span><div><b>Administrador</b><small>Perfil protegido do Lincoln.</small></div></div>
+        <button class="settings-link" id="adminSettingsLink" data-go="settings" hidden><span>⚙</span><div><b>Configurações protegidas</b><small>Integração e informações técnicas</small></div><span>→</span></button>
       </section>
 
       <section class="screen" data-screen="settings" aria-labelledby="settingsTitle">
         <div class="page-heading">
           <button class="back-button" data-go="profile" aria-label="Voltar">←</button>
-          <div><p class="eyebrow">CONFIGURAÇÃO</p><h1 id="settingsTitle">Sincronização</h1></div>
+          <div><p class="eyebrow">SOMENTE ADMINISTRADOR</p><h1 id="settingsTitle">Configurações</h1></div>
         </div>
         <div class="sync-status-card" id="syncStatusCard">
           <span class="large-sync-light"></span>
           <div><strong id="syncStatusTitle">Modo demonstração</strong><small id="syncStatusDetail">As partidas funcionam neste aparelho.</small></div>
         </div>
-        <form id="syncForm" class="settings-form">
-          <label class="field"><span>URL do Google Apps Script</span>
-            <input id="syncUrlInput" type="url" placeholder="https://script.google.com/macros/s/.../exec">
-          </label>
-          <div class="button-row">
-            <button class="button button-dark" type="submit">Testar e salvar</button>
-            <button class="button button-paper" type="button" id="clearSyncBtn">Desconectar</button>
-          </div>
-        </form>
+        <div class="protected-setting-card">
+          <span>🛡️</span><div><strong>Integração protegida</strong><p>A conexão do Google já vem configurada no app e não pode ser alterada por outros jogadores.</p></div>
+        </div>
         <div class="tech-card">
           <span class="tech-number">01</span><div><strong>Toque decidido no servidor</strong><p>O Apps Script usa um bloqueio atômico: o primeiro pedido válido vence, mesmo que dois celulares acertem juntos.</p></div>
         </div>
@@ -261,6 +262,7 @@
         </div>
         <div class="rule-intro"><strong>Regra de ouro</strong><p>Entre quaisquer duas cartas há um — e somente um — símbolo idêntico. Tamanho e rotação podem mudar.</p></div>
         <div class="rules-list" id="rulesList"></div>
+        <aside class="info-note"><span>🏁</span><p><strong>Empate tem rodada extra.</strong> Ninguém vence apenas por ter chegado antes à mesma pontuação. No celular, somente os empatados disputam uma nova combinação sincronizada.</p></aside>
         <aside class="info-note warning-note"><span>✋</span><p><strong>Errou? Respira.</strong> O jogador fica 3 segundos sem poder tocar, impedindo tentativas no chute.</p></aside>
       </section>
     </main>
@@ -269,7 +271,7 @@
       <button class="is-selected" data-go="home"><span>🏠</span><b>Início</b></button>
       <button data-go="rooms"><span>🎮</span><b>Salas</b></button>
       <button data-go="ranking"><span>🏆</span><b>Ranking</b></button>
-      <button data-go="profile"><span>😄</span><b>Perfil</b></button>
+      <button data-go="profile"><span id="profileNavIcon">🦊</span><b>Perfil</b></button>
     </nav>
   </div>
 
@@ -293,6 +295,21 @@
       <label class="field"><span>Senha do perfil</span><input id="pinUnlockInput" type="password" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="•••" autocomplete="current-password" required></label>
       <p class="pin-error" id="pinError" hidden>Senha incorreta.</p>
       <button class="button button-primary button-big" type="submit"><span>Entrar</span><span>→</span></button>
+    </form>
+  </dialog>
+
+  <dialog class="pin-dialog" id="adminDialog">
+    <div class="pin-avatar">🛡️</div>
+    <span class="result-kicker">ACESSO RESTRITO</span>
+    <h2>Administrador Lincoln</h2>
+    <p>Digite o PIN administrativo de 3 números.</p>
+    <form id="adminLoginForm">
+      <label class="field"><span>PIN administrativo</span><input id="adminPinInput" type="password" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="•••" autocomplete="current-password" required></label>
+      <p class="pin-error" id="adminPinError" hidden>PIN administrativo incorreto.</p>
+      <div class="dialog-actions">
+        <button class="button button-paper" id="adminCancelBtn" type="button">Cancelar</button>
+        <button class="button button-primary" type="submit">Entrar</button>
+      </div>
     </form>
   </dialog>
 

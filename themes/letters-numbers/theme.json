@@ -1,7 +1,7 @@
 {
   "id": "letters-numbers",
-  "name": "Letras & números",
-  "version": 1,
+  "name": "Maiúsculas & números",
+  "version": 2,
   "symbolCount": 57,
   "symbols": [
     {
@@ -186,107 +186,107 @@
     },
     {
       "id": 36,
-      "label": "a",
+      "label": "A",
       "file": "symbols/36.png"
     },
     {
       "id": 37,
-      "label": "b",
+      "label": "B",
       "file": "symbols/37.png"
     },
     {
       "id": 38,
-      "label": "c",
+      "label": "C",
       "file": "symbols/38.png"
     },
     {
       "id": 39,
-      "label": "d",
+      "label": "D",
       "file": "symbols/39.png"
     },
     {
       "id": 40,
-      "label": "e",
+      "label": "E",
       "file": "symbols/40.png"
     },
     {
       "id": 41,
-      "label": "f",
+      "label": "F",
       "file": "symbols/41.png"
     },
     {
       "id": 42,
-      "label": "g",
+      "label": "G",
       "file": "symbols/42.png"
     },
     {
       "id": 43,
-      "label": "h",
+      "label": "H",
       "file": "symbols/43.png"
     },
     {
       "id": 44,
-      "label": "i",
+      "label": "I",
       "file": "symbols/44.png"
     },
     {
       "id": 45,
-      "label": "j",
+      "label": "J",
       "file": "symbols/45.png"
     },
     {
       "id": 46,
-      "label": "k",
+      "label": "K",
       "file": "symbols/46.png"
     },
     {
       "id": 47,
-      "label": "l",
+      "label": "L",
       "file": "symbols/47.png"
     },
     {
       "id": 48,
-      "label": "m",
+      "label": "M",
       "file": "symbols/48.png"
     },
     {
       "id": 49,
-      "label": "n",
+      "label": "N",
       "file": "symbols/49.png"
     },
     {
       "id": 50,
-      "label": "o",
+      "label": "O",
       "file": "symbols/50.png"
     },
     {
       "id": 51,
-      "label": "p",
+      "label": "P",
       "file": "symbols/51.png"
     },
     {
       "id": 52,
-      "label": "q",
+      "label": "Q",
       "file": "symbols/52.png"
     },
     {
       "id": 53,
-      "label": "r",
+      "label": "R",
       "file": "symbols/53.png"
     },
     {
       "id": 54,
-      "label": "s",
+      "label": "S",
       "file": "symbols/54.png"
     },
     {
       "id": 55,
-      "label": "t",
+      "label": "T",
       "file": "symbols/55.png"
     },
     {
       "id": 56,
-      "label": "u",
+      "label": "U",
       "file": "symbols/56.png"
     }
   ]

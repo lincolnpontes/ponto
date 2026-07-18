@@ -63,8 +63,11 @@ def star(cx: float, cy: float, outer: float, inner: float, points: int = 8):
 def draw_symbol(index: int, token: str) -> Image.Image:
     image = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    color = PALETTE[index % len(PALETTE)]
-    accent = PALETTE[(index * 4 + 3) % len(PALETTE)]
+    # A segunda ocorrência de A–U usa uma cor deliberadamente distante da primeira.
+    base_index = index - 36 if index >= 36 else index
+    color_index = (base_index + 4) % len(PALETTE) if index >= 36 else base_index % len(PALETTE)
+    color = PALETTE[color_index]
+    accent = PALETTE[(color_index + 3 + index % 2) % len(PALETTE)] if index >= 36 else PALETTE[(index * 4 + 3) % len(PALETTE)]
     shape = index % 7
     bbox = (31, 31, 225, 225)
 
@@ -135,7 +138,7 @@ def main() -> None:
     theme_data = {
         "id": "letters-numbers",
         "name": "Maiúsculas & números",
-        "version": 1,
+        "version": 2,
         "symbolCount": len(metadata),
         "symbols": metadata,
     }

@@ -10,7 +10,14 @@ Jogo multiplayer inspirado na lógica matemática do Dobble, feito como PWA est�
 - Layout vertical: carta observada em cima, carta do jogador embaixo.
 - Toque no símbolo correto e punição de 3 segundos após um erro.
 - Salas simultâneas com código, lista de salas abertas e senha opcional de 3 a 8 números.
+- Cada perfil pode hospedar somente uma sala aberta; o anfitrião pode encerrá-la a qualquer momento.
+- Inclusão e remoção de vários jogadores de treino aparecem imediatamente e entram em uma fila curta de confirmação ao fundo; não é preciso esperar entre os toques.
+- Contagem regressiva sincronizada: as duas cartas só aparecem depois que todas as 16 imagens da rodada estão carregadas.
+- Progressão fiel dos quatro modos: cartas ganhas ou descartadas permanecem no topo correto, e Batata Quente transfere a mão inteira.
+- Duração rápida de 8, clássica de 16, longa de 32 ou completa de até 55 rodadas.
+- Empates abrem uma rodada extra apenas entre os jogadores empatados.
 - Perfil protegido por PIN de 3 números e ranking por vitórias ou aproveitamento, sempre sem jogadores de treino.
+- Perfil administrativo `Lincoln` para configurações protegidas; jogadores comuns não veem essa área.
 - Modos 1 a 4 do manual. `Batata quente` e `Presente de grego` ficam limitados a 4 jogadores.
 - Modo demonstração local com adversários de treino.
 - Backend Google Apps Script + Sheets com bloqueio atômico para decidir quem tocou primeiro.
@@ -44,14 +51,14 @@ Depois abra `http://localhost:8787`.
 
 1. Abra [script.google.com](https://script.google.com) e crie um projeto.
 2. Cole o conteúdo de `google-apps-script/Code.gs` no arquivo `Code.gs`.
-3. Clique em **Implantar → Nova implantação → Aplicativo da Web**.
-4. Em **Executar como**, escolha sua conta. Em **Quem pode acessar**, escolha **Qualquer pessoa**.
-5. Autorize o script e copie a URL terminada em `/exec`.
-6. No PONTO!, abra **Perfil → Sincronização e ajustes**, cole a URL e toque em **Testar e salvar**.
+3. Como essa URL já está integrada ao PONTO!, abra **Implantar → Gerenciar implantações**.
+4. Edite a implantação, escolha **Nova versão** e confirme em **Implantar**.
+
+O perfil administrativo já é criado como `Lincoln`, com PIN inicial `784`. Entre por **Perfil → Acesso do administrador** e troque o PIN ao salvar o perfil pela primeira vez. Sempre que este arquivo mudar, atualize a implantação existente escolhendo **Nova versão**.
 
 A primeira chamada cria automaticamente no seu Google Drive a planilha `PONTO! — Banco de dados`, com as abas `PROFILES`, `ROOMS`, `EVENTS` e `MATCHES`.
 
-A URL da implantação principal já fica definida em `config.js`. Em um aparelho novo, o app usa essa URL automaticamente; uma URL salva manualmente nos ajustes continua tendo prioridade.
+A implantação principal fica definida em `config.js`, portanto aparelhos novos já iniciam com a URL correta.
 
 ## Como a disputa é decidida
 

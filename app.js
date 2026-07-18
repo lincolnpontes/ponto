@@ -2,11 +2,12 @@
   "use strict";
 
   const STORAGE_KEY = "ponto_app_state_v1";
-  const DEFAULT_SYNC_URL = String(window.PONTO_CONFIG?.appsScriptUrl || "").trim().replace(/\/+$/, "");
   const ACTIVE_POLL_MS = 250;
   const LOBBY_POLL_MS = 650;
   const PENALTY_MS = 3000;
   const THEME_ROOT = "themes/letters-numbers";
+  const SYNC_URL = String(window.PONTO_CONFIG?.appsScriptUrl || "https://script.google.com/macros/s/AKfycbxMNe2tp1R0D0IaPxm4OemPqfO2WwIVX9ghnlU47vJw2v8mWKjoq5_Nb4InpIwXVpU/exec").trim().replace(/\/+$/, "");
+  const ADMIN_PROFILE_ID = "admin_lincoln";
 
   const MODES = [
     {
@@ -14,8 +15,8 @@
       number: 1,
       title: "Torre do caos",
       icon: "🗼",
-      short: "Ganhe a carta central a cada acerto. Quem juntar mais vence.",
-      objective: "Encontre o símbolo entre a carta central e a sua. O mais rápido leva a carta; no fim, vence quem acumulou mais.",
+      short: "A carta central ganha vira sua nova carta. Quem juntar mais vence.",
+      objective: "Compare sua carta com a central. Quem acertar primeiro coloca a central sobre a própria pilha e passa a usá-la na jogada seguinte. Os demais mantêm suas cartas. Vence quem acumular mais cartas.",
       players: "2–8 jogadores",
       duration: "5–10 min",
       maxPlayers: 8,
@@ -28,7 +29,7 @@
       title: "O poço",
       icon: "🕳️",
       short: "Descarte sua pilha. O primeiro a ficar sem cartas vence.",
-      objective: "Acerte o símbolo comum e descarte sua carta sobre a central. O primeiro jogador a zerar a pilha ganha.",
+      objective: "Compare o topo da sua pilha com a carta central. Ao acertar, sua carta vira a nova central e você revela a próxima. O primeiro jogador a ficar sem cartas vence.",
       players: "2–8 jogadores",
       duration: "5–10 min",
       maxPlayers: 8,
@@ -40,8 +41,8 @@
       number: 3,
       title: "Batata quente",
       icon: "🔥",
-      short: "Passe a batata antes dos outros. Até 4 jogadores.",
-      objective: "Ache a combinação com a carta observada para passar a batata. Ao final das rodadas, quem recebeu menos cartas vence.",
+      short: "Passe toda a sua mão antes dos outros. Até 4 jogadores.",
+      objective: "Toque no avatar de outro jogador e compare a carta no topo da sua mão com a dele. Ao acertar, você entrega a ele todas as suas cartas. Quem termina a rodada com tudo perde e guarda essas cartas. No final, vence quem tiver menos.",
       players: "2–4 jogadores",
       duration: "5 rodadas",
       maxPlayers: 4,
@@ -53,17 +54,17 @@
       number: 4,
       title: "Presente de grego",
       icon: "🎁",
-      short: "Ache o par e mande uma carta indesejada ao adversário.",
-      objective: "Compare sua carta com a carta do adversário indicado. Um acerto envia o presente para ele; vence quem recebe menos.",
+      short: "Ache o par e mande a carta central ao adversário.",
+      objective: "Toque no avatar do adversário que quiser e compare a carta central com a carta dele. Um acerto coloca a central sobre a pilha escolhida; essa passa a ser a nova carta do adversário. Vence quem receber menos cartas.",
       players: "2–4 jogadores",
       duration: "5–8 min",
       maxPlayers: 4,
       scoreLabel: "presentes",
-      observedLabel: "CARTA DO ADVERSÁRIO",
+      observedLabel: "CARTA CENTRAL",
     },
   ];
 
-  const AVATARS = ["⚡", "🦊", "🐯", "🐸", "🦄", "🐼", "🦁", "🐙", "🚀", "🐲", "👾", "😎"];
+  const AVATARS = ["🦊", "🐯", "🐸", "🦄", "🐼", "🦁", "🐨", "🐲", "🦋", "😎", "🐶", "🐱"];
   const BOT_NAMES = ["Bia", "Caio", "Malu", "Nina", "Theo", "Zeca", "Iara"];
   const SYMBOL_LABELS = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", ..."ABCDEFGHIJKLMNOPQRSTU"];
   const CARD_LAYOUT = [
@@ -159,19 +160,21 @@
   function loadState() {
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); } catch (_) { saved = {}; }
+    const savedAvatar = saved.profile?.avatar;
     return {
-      syncUrl: Object.prototype.hasOwnProperty.call(saved, "syncUrl") ? saved.syncUrl : DEFAULT_SYNC_URL,
+      syncUrl: SYNC_URL,
       sound: saved.sound !== false,
       profile: {
         id: saved.profile?.id || uid("player"),
-        name: saved.profile?.name || "Lincoln",
-        avatar: saved.profile?.avatar || "⚡",
+        name: saved.profile?.name || "Jogador",
+        avatar: AVATARS.includes(savedAvatar) ? savedAvatar : AVATARS[0],
         token: saved.profile?.token || "",
         pinHash: saved.profile?.pinHash || "",
         games: Number(saved.profile?.games || 0),
         wins: Number(saved.profile?.wins || 0),
         roundWins: Number(saved.profile?.roundWins || 0),
         bestStreak: Number(saved.profile?.bestStreak || 0),
+        isAdmin: saved.profile?.isAdmin === true,
       },
       recentRooms: Array.isArray(saved.recentRooms) ? saved.recentRooms.slice(0, 6) : [],
     };
@@ -184,6 +187,7 @@
   let roomTab = "create";
   let room = null;
   let pollTimer = 0;
+  let pollGeneration = 0;
   let botTimer = 0;
   let penaltyTimer = 0;
   let feedbackTimer = 0;
@@ -192,16 +196,38 @@
   let lastRenderedRound = "";
   let currentStreak = 0;
   let openRooms = [];
+  let joinSource = "code";
+  let createPending = false;
+  let activeCreateId = "";
+  let botMutationPending = false;
+  let botSyncRunning = false;
+  const botMutationQueue = [];
+  const confirmedBotIds = new Map();
+  let rankingCache = null;
+  let rankingRequestId = 0;
+  let serverClockOffset = 0;
+  let symbolsLoaded = false;
+  let roundRevealTimer = 0;
+  let roundRevealReadyId = "";
+  let selectedTargetId = "";
   let audioContext = null;
 
   function saveState() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }
 
-  async function hashPin(pin) {
-    const bytes = new TextEncoder().encode(`ponto:${state.profile.id}:${pin}`);
+  async function hashPinFor(profileId, pin) {
+    const bytes = new TextEncoder().encode(`ponto:${profileId}:${pin}`);
     const digest = await crypto.subtle.digest("SHA-256", bytes);
     return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+  }
+
+  function hashPin(pin) {
+    return hashPinFor(state.profile.id, pin);
+  }
+
+  function isAdminProfile() {
+    return state.profile.id === ADMIN_PROFILE_ID && state.profile.isAdmin === true;
   }
 
   function sessionPin() {
@@ -216,6 +242,16 @@
   function symbolPath(symbolId) {
     return `${THEME_ROOT}/symbols/${String(symbolId).padStart(2, "0")}.png`;
   }
+
+  const symbolPreloadPromise = Promise.all(Array.from({ length: 57 }, (_, symbolId) => new Promise((resolve) => {
+    const image = new Image();
+    image.onload = async () => {
+      try { if (image.decode) await image.decode(); } catch (_) { /* A imagem já pode ser exibida. */ }
+      resolve();
+    };
+    image.onerror = resolve;
+    image.src = symbolPath(symbolId);
+  }))).then(() => { symbolsLoaded = true; });
 
   function renderCard(element, cardId, roundKey, options = {}) {
     if (!element) return;
@@ -281,6 +317,9 @@
     $$('[data-room-tab]').forEach((button) => button.classList.toggle("is-selected", button.dataset.roomTab === tab));
     $$('[data-room-panel]').forEach((panel) => panel.classList.toggle("is-active", panel.dataset.roomPanel === tab));
     if (tab === "join") {
+      joinSource = "code";
+      $("#joinPasswordField").hidden = true;
+      $("#roomPasswordJoin").value = "";
       setTimeout(() => $("#roomCodeInput")?.focus(), 120);
       refreshOpenRooms();
     }
@@ -288,8 +327,16 @@
 
   function showScreen(screen) {
     if (!$( `[data-screen="${screen}"]` )) screen = "home";
+    if (screen === "settings" && !isAdminProfile()) {
+      toast("Somente o administrador pode abrir essas configurações.", "error");
+      screen = "profile";
+    }
     currentScreen = screen;
     document.body.classList.toggle("is-gaming", screen === "game");
+    if (screen !== "game") {
+      clearInterval(roundRevealTimer);
+      $("#roundReadyOverlay").hidden = true;
+    }
     $$(".screen").forEach((node) => node.classList.toggle("is-active", node.dataset.screen === screen));
     $$(".bottom-nav [data-go]").forEach((button) => button.classList.toggle("is-selected", button.dataset.go === screen));
     window.scrollTo({ top: 0, behavior: "instant" });
@@ -337,6 +384,7 @@
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), options.timeout || 9000);
     let response;
+    const requestStartedAt = now();
     try {
       response = await fetch(state.syncUrl, {
         method: "POST",
@@ -361,17 +409,27 @@
     let json;
     try { json = JSON.parse(text); } catch (_) { throw new Error("O Apps Script devolveu uma resposta inválida."); }
     if (!response.ok || json.ok === false) throw new Error(json.error || "Falha na sincronização.");
+    if (Number(json.serverTime || 0) > 0) serverClockOffset = Number(json.serverTime) - Math.round((requestStartedAt + now()) / 2);
     if (json.token) {
       state.profile.token = json.token;
       if (json.profile?.id) state.profile.id = json.profile.id;
+      saveState();
+    }
+    if (json.profile && json.profile.isAdmin !== undefined) {
+      state.profile.isAdmin = json.profile.isAdmin === true;
       saveState();
     }
     updateSyncPill("online");
     return json;
   }
 
-  async function ensureRemoteProfile() {
+  function serverNow() {
+    return now() + serverClockOffset;
+  }
+
+  async function ensureRemoteProfile(forceUpdate = false) {
     if (!state.syncUrl) return;
+    if (state.profile.token && !forceUpdate) return;
     const pin = sessionPin();
     if (!state.profile.token && !/^\d{3}$/.test(pin)) throw new Error("Salve o perfil com uma senha de 3 números antes de conectar.");
     try {
@@ -417,15 +475,27 @@
     return Array.from({ length: 5 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
   }
 
-  function createDemoRoom(modeId, maxPlayers, roundsTotal, botCount = 0, password = "") {
+  function normalizeRoundsPreset(value) {
+    const preset = String(value || "16");
+    return ["8", "16", "32", "55"].includes(preset) ? preset : "16";
+  }
+
+  function resolveRoundsTotal(_modeId, presetValue, _playerCount) {
+    const preset = normalizeRoundsPreset(presetValue);
+    return Number(preset);
+  }
+
+  function createDemoRoom(modeId, maxPlayers, roundsPreset, botCount = 0, password = "") {
     const players = buildDemoPlayers(Math.min(maxPlayers, modeById(modeId).maxPlayers), botCount);
+    const normalizedPreset = normalizeRoundsPreset(roundsPreset);
     return {
       transport: "demo",
       code: makeRoomCode(),
       hostId: state.profile.id,
       mode: modeId,
       maxPlayers,
-      roundsTotal,
+      roundsPreset: normalizedPreset,
+      roundsTotal: resolveRoundsTotal(modeId, normalizedPreset, players.length),
       theme: "letters-numbers",
       hasPassword: Boolean(password),
       password,
@@ -444,25 +514,59 @@
     saveState();
   }
 
-  async function createRoom({ modeId, maxPlayers, roundsTotal, quick = false, botCount = 0, password = "" }) {
+  async function createRoom({ modeId, maxPlayers, roundsPreset, quick = false, botCount = 0, password = "" }) {
     selectedMode = modeId;
-    try {
-      if (state.syncUrl && !quick) {
-        await ensureRemoteProfile();
-        const result = await api("createRoom", { mode: modeId, maxPlayers, roundsTotal, theme: "letters-numbers", botCount, password });
-        room = { ...result.room, transport: "remote" };
-      } else {
-        room = createDemoRoom(modeId, maxPlayers, roundsTotal, botCount, password);
-      }
+    if (!quick && room && room.hostId === state.profile.id && ["lobby", "active"].includes(room.status)) {
+      showScreen(room.status === "active" ? "game" : "lobby");
+      toast("Você já tem uma sala aberta.");
+      return;
+    }
+    if (!quick && createPending) return toast("Sua sala já está sendo criada.");
+
+    if (quick) {
+      room = createDemoRoom(modeId, maxPlayers, roundsPreset, botCount, password);
       addRecentRoom(room);
       renderLobby();
       showScreen("lobby");
-      if (quick) {
-        await sleep(350);
-        startGame();
+      await sleep(350);
+      startGame();
+      return;
+    }
+
+    const createId = uid("create");
+    const requestedCode = makeRoomCode();
+    activeCreateId = createId;
+    createPending = true;
+    room = createDemoRoom(modeId, maxPlayers, roundsPreset, botCount, password);
+    room.code = requestedCode;
+    room.transport = "remote-pending";
+    room.pendingCreateId = createId;
+    renderLobby();
+    showScreen("lobby");
+    toast("Sala criada; sincronizando…", "good");
+
+    try {
+      await ensureRemoteProfile();
+      const result = await api("createRoom", { mode: modeId, maxPlayers, roundsPreset: normalizeRoundsPreset(roundsPreset), theme: "letters-numbers", botCount, password, requestedCode });
+      if (activeCreateId !== createId) {
+        api("closeRoom", { code: result.room.code }, { timeout: 7000 }).catch(() => {});
+        return;
       }
+      room = { ...result.room, transport: "remote" };
+      addRecentRoom(room);
+      renderLobby();
+      showScreen(room.status === "active" ? "game" : "lobby");
+      if (result.reused) toast("Sua sala que já estava aberta foi recuperada.", "good");
     } catch (error) {
+      if (activeCreateId !== createId) return;
+      room = null;
+      showScreen("rooms");
       toast(error.message, "error");
+    } finally {
+      if (activeCreateId === createId) {
+        createPending = false;
+        activeCreateId = "";
+      }
     }
   }
 
@@ -498,7 +602,7 @@
     }
   }
 
-  async function joinRoom(code, password = "") {
+  async function joinRoom(code, password = "", source = "code") {
     const normalized = String(code).trim().toUpperCase();
     if (normalized.length !== 5) return toast("Digite os 5 caracteres do código.", "error");
     if (!state.syncUrl) {
@@ -508,7 +612,7 @@
     }
     try {
       await ensureRemoteProfile();
-      const result = await api("joinRoom", { code: normalized, password });
+      const result = await api("joinRoom", { code: normalized, password, source });
       room = { ...result.room, transport: "remote" };
       addRecentRoom(room);
       renderLobby();
@@ -521,43 +625,141 @@
   function renderLobby() {
     if (!room) return;
     const mode = modeById(room.mode);
+    const isHost = room.hostId === state.profile.id;
     $("#lobbyCode").textContent = room.code;
     $("#playerCount").textContent = String(room.players?.length || 0);
     $("#lobbyMode").innerHTML = `<span class="mode-emoji">${mode.icon}</span><div><strong>${mode.title}</strong><small>${mode.short}</small></div>`;
     $("#lobbyPlayers").innerHTML = (room.players || []).map((player) => `
-      <div class="player-row">
+      <div class="player-row${player.pending ? " is-pending" : ""}">
         <div class="player-avatar">${escapeHTML(player.avatar)}</div>
         <div><strong>${escapeHTML(player.name)}${player.id === state.profile.id ? " (você)" : ""}</strong><small>${player.isHost ? "Anfitrião" : player.bot ? "Jogador de treino" : "Conectado agora"}</small></div>
-        <span class="ready-pill">pronto</span>
+        <div class="player-actions"><span class="ready-pill">${player.pending ? "sincronizando" : "pronto"}</span>${isHost && player.bot ? `<button class="remove-bot-button" type="button" data-remove-bot="${escapeHTML(player.id)}" aria-label="Remover ${escapeHTML(player.name)}">×</button>` : ""}</div>
       </div>`).join("");
-    const isHost = room.hostId === state.profile.id;
+    const waitingServer = room.transport === "remote-pending" || botMutationPending;
     $("#startGameBtn").hidden = !isHost;
-    $("#startGameBtn").disabled = (room.players?.length || 0) < 2;
+    $("#startGameBtn").disabled = (room.players?.length || 0) < 2 || waitingServer;
     $("#addTrainingPlayerBtn").hidden = !isHost || (room.players?.length || 0) >= room.maxPlayers;
+    $("#addTrainingPlayerBtn").disabled = room.transport === "remote-pending";
+    $("#closeRoomBtn").hidden = !isHost;
+    $("#closeRoomBtn").disabled = false;
+    $("#leaveGameBtn").textContent = isHost ? "■" : "×";
+    $("#leaveGameBtn").setAttribute("aria-label", isHost ? "Encerrar sala" : "Sair da partida");
     $("#hostHint").textContent = isHost ? "Você é o anfitrião. A partida começa para todos ao mesmo tempo." : "Aguardando o anfitrião começar a partida.";
   }
 
-  async function addTrainingPlayer() {
-    if (!room || room.hostId !== state.profile.id || room.players.length >= room.maxPlayers) return;
+  function addTrainingPlayer() {
+    if (!room || room.hostId !== state.profile.id || room.players.length >= room.maxPlayers || room.transport === "remote-pending") return;
+    const usedNames = new Set(room.players.map((player) => player.name));
+    const botIndex = room.players.filter((player) => player.bot).length;
+    const name = room.transport === "remote" ? BOT_NAMES[botIndex % BOT_NAMES.length] : BOT_NAMES.find((entry) => !usedNames.has(entry)) || `Treino ${room.players.length}`;
+    const index = room.players.length;
+    const tempBot = {
+      id: `pending_${uid("training")}`, name, avatar: room.transport === "remote" ? AVATARS[botIndex % 7] : AVATARS[(index + 2) % AVATARS.length],
+      isHost: false, ready: true, score: 0, cardCount: 0, remaining: 8,
+      penaltyCards: 0, penaltyUntil: 0, bot: true, pending: room.transport === "remote",
+    };
+    room.players.push(tempBot);
+    renderLobby();
+    toast("Jogador de treino adicionado.", "good");
+    if (room.transport !== "remote") return;
+    botMutationQueue.push({ type: "add", roomCode: room.code, tempId: tempBot.id });
+    processBotMutationQueue();
+  }
+
+  function removeTrainingPlayer(botId) {
+    if (!room || room.hostId !== state.profile.id) return;
+    const bot = room.players.find((player) => player.id === botId && player.bot);
+    if (!bot) return;
+    const roomCode = room.code;
+    const originalIndex = room.players.indexOf(bot);
+    room.players = room.players.filter((player) => player.id !== botId);
+    renderLobby();
+    toast("Jogador de treino removido.", "good");
+    if (room.transport !== "remote") return;
+    botMutationQueue.push({ type: "remove", roomCode, botId, bot, originalIndex });
+    processBotMutationQueue();
+  }
+
+  async function processBotMutationQueue() {
+    if (botSyncRunning) return;
+    botSyncRunning = true;
+    botMutationPending = true;
+    stopPolling();
+    if (room) renderLobby();
     try {
-      if (room.transport === "remote") {
-        const result = await api("addBot", { code: room.code });
-        room = { ...result.room, transport: "remote" };
-      } else {
-        const usedNames = new Set(room.players.map((player) => player.name));
-        const name = BOT_NAMES.find((entry) => !usedNames.has(entry)) || `Treino ${room.players.length}`;
-        const index = room.players.length;
-        room.players.push({
-          id: `bot_${uid("training")}`, name, avatar: AVATARS[(index + 2) % AVATARS.length],
-          isHost: false, ready: true, score: 0, cardCount: 0, remaining: 8,
-          penaltyCards: 0, penaltyUntil: 0, bot: true,
-        });
+      while (botMutationQueue.length) {
+        const operation = botMutationQueue[0];
+        if (!room || room.code !== operation.roomCode) {
+          botMutationQueue.shift();
+          continue;
+        }
+        try {
+          if (operation.type === "add") {
+            const knownIds = new Set(room.players.filter((player) => player.bot && !player.pending).map((player) => player.id));
+            confirmedBotIds.forEach((value) => { if (value) knownIds.add(value); });
+            const result = await api("addBot", { code: operation.roomCode, clientBotId: operation.tempId });
+            const addedBot = result.room?.players?.find((player) => player.bot && !knownIds.has(player.id));
+            const serverBotId = result.botId || addedBot?.id || "";
+            confirmedBotIds.set(operation.tempId, serverBotId || null);
+            const localBot = room?.code === operation.roomCode ? room.players.find((player) => player.id === operation.tempId) : null;
+            if (localBot && addedBot) Object.assign(localBot, addedBot, { pending: false });
+            else if (localBot) localBot.pending = false;
+          } else {
+            const serverBotId = confirmedBotIds.has(operation.botId) ? confirmedBotIds.get(operation.botId) : operation.botId;
+            if (serverBotId && !String(serverBotId).startsWith("pending_")) await api("removeBot", { code: operation.roomCode, botId: serverBotId });
+          }
+        } catch (error) {
+          if (room?.code === operation.roomCode) {
+            if (operation.type === "add") room.players = room.players.filter((player) => player.id !== operation.tempId);
+            else if (!room.players.some((player) => player.id === operation.bot.id)) room.players.splice(Math.max(0, operation.originalIndex), 0, operation.bot);
+            toast(error.message, "error");
+          }
+        } finally {
+          botMutationQueue.shift();
+          if (room?.code === operation.roomCode) renderLobby();
+        }
       }
-      renderLobby();
-      toast("Jogador de treino adicionado.", "good");
+    } finally {
+      botSyncRunning = false;
+      botMutationPending = botMutationQueue.length > 0;
+      if (botMutationQueue.length) processBotMutationQueue();
+      else if (room?.transport === "remote" && currentScreen === "lobby") startPolling();
+    }
+  }
+
+  async function closeCurrentRoom() {
+    if (!room || room.hostId !== state.profile.id) return;
+    if (!window.confirm("Encerrar esta sala para todos os jogadores?")) return;
+    const closingRoom = room;
+    const closingCode = room.code;
+    const closingScreen = currentScreen;
+    activeCreateId = "";
+    createPending = false;
+    stopPolling();
+    clearTimeout(botTimer);
+    room = null;
+    showScreen("home");
+    toast("Sala encerrada.", "good");
+    if (closingRoom.transport === "demo" || closingRoom.transport === "remote-pending") return;
+    try {
+      await api("closeRoom", { code: closingCode }, { timeout: 7000 });
     } catch (error) {
+      room = closingRoom;
+      showScreen(closingScreen === "game" ? "game" : "lobby");
       toast(error.message, "error");
     }
+  }
+
+  function leaveCurrentRoom() {
+    if (!room) return showScreen("home");
+    if (room.hostId === state.profile.id) return closeCurrentRoom();
+    const leavingRoom = room;
+    stopPolling();
+    clearTimeout(botTimer);
+    room = null;
+    showScreen("home");
+    toast("Você saiu da sala.");
+    if (leavingRoom.transport === "remote") api("leaveRoom", { code: leavingRoom.code }, { timeout: 7000 }).catch(() => {});
   }
 
   function takeDeckCard(used = new Set()) {
@@ -569,42 +771,106 @@
     return Math.floor(Math.random() * 57);
   }
 
-  function prepareDemoRound() {
-    const used = new Set();
-    const observedCardId = takeDeckCard(used);
-    used.add(observedCardId);
-    const playerCardIds = {};
+  function prepareDemoPotatoHands() {
+    room.potatoStep = 1;
     room.players.forEach((player) => {
-      playerCardIds[player.id] = takeDeckCard(used);
-      used.add(playerCardIds[player.id]);
+      player.topCardId = takeDeckCard();
+      player.handCount = 1;
     });
+  }
+
+  function setupDemoGame() {
+    room.roundsTotal = resolveRoundsTotal(room.mode, room.roundsPreset, room.players.length);
+    room.isTiebreak = false;
+    room.tiebreakPlayerIds = [];
+    room.players.forEach((player) => {
+      player.score = 0;
+      player.cardCount = 0;
+      player.penaltyCards = 0;
+      player.penaltyUntil = 0;
+      player.currentStreak = 0;
+      player.pile = [];
+      player.handCount = 0;
+      player.topCardId = null;
+    });
+    if (room.mode === "well") {
+      room.centralCardId = takeDeckCard();
+      let playerIndex = 0;
+      while (room.deckCursor < 57) {
+        room.players[playerIndex % room.players.length].pile.push(takeDeckCard());
+        playerIndex += 1;
+      }
+      room.players.forEach((player) => {
+        player.remaining = player.pile.length;
+        player.topCardId = player.pile[0];
+      });
+    } else if (room.mode === "potato") {
+      prepareDemoPotatoHands();
+    } else {
+      room.players.forEach((player) => { player.topCardId = takeDeckCard(); });
+    }
+  }
+
+  function prepareDemoRound(firstRound = false) {
+    const playerCardIds = {};
     const observedCardIds = {};
     const targetIds = {};
-    room.players.forEach((player, index) => {
-      if (room.mode === "gift") {
-        const target = room.players[(index + 1) % room.players.length];
+    let observedCardId = room.centralCardId;
+    let eligiblePlayerIds = room.players.map((player) => player.id);
+
+    if (room.isTiebreak) {
+      eligiblePlayerIds = room.tiebreakPlayerIds.slice();
+      observedCardId = takeDeckCard();
+      eligiblePlayerIds.forEach((playerId) => {
+        playerCardIds[playerId] = takeDeckCard();
+        observedCardIds[playerId] = observedCardId;
+      });
+    } else if (room.mode === "potato") {
+      const active = room.players.filter((player) => Number(player.handCount || 0) > 0);
+      eligiblePlayerIds = active.map((player) => player.id);
+      active.forEach((player, index) => {
+        const target = active[(index + 1) % active.length];
+        playerCardIds[player.id] = player.topCardId;
+        observedCardIds[player.id] = target.topCardId;
         targetIds[player.id] = target.id;
-        observedCardIds[player.id] = playerCardIds[target.id];
-      } else {
+      });
+      observedCardId = null;
+    } else {
+      if (room.mode === "tower" || room.mode === "gift") room.centralCardId = takeDeckCard();
+      observedCardId = room.centralCardId;
+      room.players.forEach((player, index) => {
+        if (room.mode === "gift") {
+          const offset = 1 + ((room.roundNumber - 1) % Math.max(1, room.players.length - 1));
+          const target = room.players[(index + offset) % room.players.length];
+          targetIds[player.id] = target.id;
+          playerCardIds[player.id] = target.topCardId;
+        } else {
+          playerCardIds[player.id] = player.topCardId;
+        }
         observedCardIds[player.id] = observedCardId;
-      }
-    });
+      });
+    }
+
     room.round = {
-      id: `${room.code}_${room.roundNumber}_${uid("round")}`,
+      id: `${room.code}_${room.roundNumber}_${room.potatoStep || 0}_${uid("round")}`,
       number: room.roundNumber,
       observedCardId,
       observedCardIds,
       playerCardIds,
       targetIds,
+      eligiblePlayerIds,
+      isTiebreak: room.isTiebreak,
       claimedBy: "",
       claimedAt: 0,
       locked: false,
+      revealAt: now() + (firstRound ? 3200 : 650),
       startedAt: now(),
     };
   }
 
   async function startGame() {
     if (!room) return;
+    if (room.transport === "remote-pending" || botMutationPending) return toast("Aguarde a sincronização da sala.");
     try {
       if (room.transport === "remote") {
         const result = await api("startGame", { code: room.code });
@@ -612,14 +878,8 @@
       } else {
         room.status = "active";
         room.roundNumber = 1;
-        room.players.forEach((player) => {
-          player.score = 0;
-          player.cardCount = 0;
-          player.remaining = 8;
-          player.penaltyCards = 0;
-          player.penaltyUntil = 0;
-        });
-        prepareDemoRound();
+        setupDemoGame();
+        prepareDemoRound(true);
       }
       currentStreak = 0;
       lastRenderedRound = "";
@@ -635,15 +895,43 @@
 
   function observedLabelForRoom() {
     const mode = modeById(room.mode);
-    const targetId = room.round?.targetIds?.[state.profile.id] || room.round?.targetId;
-    if (room.mode === "gift" && targetId) {
+    if (room.round?.isTiebreak) return "CARTA DO DESEMPATE";
+    const targetId = selectedTargetForRoom()?.id || room.round?.targetIds?.[state.profile.id] || room.round?.targetId;
+    if (room.mode === "potato" && targetId) {
       const target = room.players.find((player) => player.id === targetId);
       return target ? `CARTA DE ${target.name.toUpperCase()}` : mode.observedLabel;
     }
     return mode.observedLabel;
   }
 
+  function playerCardLabelForRoom() {
+    if (room.round?.isTiebreak) return "SUA CARTA";
+    const targetId = selectedTargetForRoom()?.id || room.round?.targetIds?.[state.profile.id];
+    if (room.mode === "gift" && targetId) {
+      const target = room.players.find((player) => player.id === targetId);
+      return target ? `CARTA DE ${target.name.toUpperCase()}` : "CARTA DO ADVERSÁRIO";
+    }
+    return "SUA CARTA";
+  }
+
+  function availableTargetsForRoom() {
+    if (!room || room.round?.isTiebreak || !["gift", "potato"].includes(room.mode)) return [];
+    return room.players.filter((player) => player.id !== state.profile.id && player.topCardId !== null && player.topCardId !== undefined && (room.mode !== "potato" || Number(player.handCount || 0) > 0));
+  }
+
+  function selectedTargetForRoom() {
+    const targets = availableTargetsForRoom();
+    let target = targets.find((player) => player.id === selectedTargetId);
+    if (!target) {
+      const suggestedId = room?.round?.targetIds?.[state.profile.id];
+      target = targets.find((player) => player.id === suggestedId) || targets[0] || null;
+      selectedTargetId = target?.id || "";
+    }
+    return target;
+  }
+
   function observedCardFor(playerId = state.profile.id) {
+    if (!room.round?.isTiebreak && playerId === state.profile.id && room.mode === "potato") return selectedTargetForRoom()?.topCardId;
     return room.round?.observedCardIds?.[playerId] ?? room.round?.observedCardId;
   }
 
@@ -651,27 +939,96 @@
     if (!room?.round) return;
     const player = currentPlayer();
     const mode = modeById(room.mode);
+    const roundChanged = lastRenderedRound !== room.round.id;
+    if (roundChanged) selectedTargetId = "";
+    const selectedTarget = selectedTargetForRoom();
     $("#gameModeTitle").textContent = mode.title;
     $("#gameRoomCode").textContent = room.code;
     $("#observedLabel").textContent = observedLabelForRoom();
-    $("#roundCounter").textContent = `${room.roundNumber} / ${room.roundsTotal}`;
-    $("#playerCardCount").textContent = room.mode === "well" ? `${player?.remaining ?? 0} restantes` : `+${player?.cardCount ?? player?.score ?? 0} cartas`;
+    $("#playerCardLabel").textContent = playerCardLabelForRoom();
+    $("#roundCounter").textContent = room.round.isTiebreak ? "DESEMPATE" : room.mode === "potato" && Number(room.potatoStep || 1) > 1 ? `${room.roundNumber} / ${room.roundsTotal} · passe ${room.potatoStep}` : `${room.roundNumber} / ${room.roundsTotal}`;
+    $("#playerCardCount").textContent = room.mode === "well" ? `${player?.remaining ?? 0} restantes` : room.mode === "potato" ? (Number(player?.handCount || 0) > 0 ? `${player.handCount} na mão` : "você passou") : room.mode === "gift" ? `${player?.penaltyCards || 0} recebidas` : `+${player?.cardCount ?? player?.score ?? 0} cartas`;
     $("#soundBtn").textContent = state.sound ? "♪" : "×";
 
     $("#scoreStrip").innerHTML = room.players.map((entry) => {
       const score = room.mode === "well" ? entry.remaining : room.mode === "gift" || room.mode === "potato" ? entry.penaltyCards : entry.score;
-      return `<span class="score-chip${entry.id === state.profile.id ? " is-you" : ""}">${escapeHTML(entry.avatar)} ${escapeHTML(entry.name)} <b>${score ?? 0}</b></span>`;
+      const canTarget = !room.round.isTiebreak && ["gift", "potato"].includes(room.mode) && entry.id !== state.profile.id && entry.topCardId !== null && entry.topCardId !== undefined && (room.mode !== "potato" || Number(entry.handCount || 0) > 0);
+      const tag = canTarget ? "button" : "span";
+      const targetAttribute = canTarget ? ` type="button" data-target-player="${escapeHTML(entry.id)}"` : "";
+      return `<${tag}${targetAttribute} class="score-chip${entry.id === state.profile.id ? " is-you" : ""}${selectedTarget?.id === entry.id ? " is-target" : ""}"><span class="score-avatar">${escapeHTML(entry.avatar)}</span><span>${escapeHTML(entry.name)}</span><b>${score ?? 0}</b></${tag}>`;
     }).join("");
 
-    if (force || lastRenderedRound !== room.round.id) {
-      const playerCardId = room.round.playerCardIds?.[state.profile.id];
-      renderCard($("#observedCard"), observedCardFor(), room.round.id, { interactive: true, variant: "observed" });
-      renderCard($("#playerCard"), playerCardId, room.round.id, { interactive: true, variant: "player" });
+    if (force || roundChanged) {
+      const playerCardId = room.mode === "gift" && !room.round.isTiebreak ? selectedTarget?.topCardId : room.round.playerCardIds?.[state.profile.id];
+      const observedCardId = observedCardFor();
+      if (observedCardId === undefined || observedCardId === null || playerCardId === undefined || playerCardId === null) {
+        $("#observedCard").innerHTML = '<span class="waiting-card-text">Aguarde os outros jogadores.</span>';
+        $("#playerCard").innerHTML = '<span class="waiting-card-text">Você já passou suas cartas nesta rodada.</span>';
+        $("#observedCard").classList.add("is-waiting");
+        $("#playerCard").classList.add("is-waiting");
+      } else {
+        $("#observedCard").classList.remove("is-waiting");
+        $("#playerCard").classList.remove("is-waiting");
+        renderCard($("#observedCard"), observedCardId, room.round.id, { interactive: true, variant: "observed" });
+        renderCard($("#playerCard"), playerCardId, room.round.id, { interactive: true, variant: "player" });
+      }
       lastRenderedRound = room.round.id;
       claimPending = false;
       updatePenaltyCover();
-      scheduleBotClaim();
+      if (roundChanged) scheduleRoundReveal();
+      else if (roundRevealReadyId === room.round.id) {
+        $("#observedCard").classList.remove("is-concealed");
+        $("#playerCard").classList.remove("is-concealed");
+      }
     }
+  }
+
+  function scheduleRoundReveal() {
+    clearInterval(roundRevealTimer);
+    roundRevealReadyId = "";
+    const roundId = room?.round?.id;
+    const overlay = $("#roundReadyOverlay");
+    const count = $("#roundReadyCount");
+    if (!roundId) return;
+    let roundImagesLoaded = false;
+    $("span", overlay).textContent = room.round.isTiebreak ? "RODADA DE DESEMPATE" : "TODO MUNDO PRONTO?";
+    const roundImagePromise = Promise.all($$(".game-card img").map((image) => new Promise((resolve) => {
+      const finish = async () => {
+        try { if (image.decode) await image.decode(); } catch (_) { /* O carregamento já terminou. */ }
+        resolve();
+      };
+      if (image.complete) finish();
+      else {
+        image.addEventListener("load", finish, { once: true });
+        image.addEventListener("error", resolve, { once: true });
+      }
+    }))).then(() => { roundImagesLoaded = true; });
+    overlay.hidden = false;
+    $("#observedCard").classList.add("is-concealed");
+    $("#playerCard").classList.add("is-concealed");
+    setCardButtonsDisabled(true);
+
+    const update = () => {
+      if (!room?.round || room.round.id !== roundId || currentScreen !== "game") {
+        clearInterval(roundRevealTimer);
+        return;
+      }
+      const remaining = Number(room.round.revealAt || 0) - serverNow();
+      const assetsReady = symbolsLoaded && roundImagesLoaded;
+      count.textContent = !assetsReady ? "…" : remaining > 0 ? String(Math.max(1, Math.ceil(remaining / 1000))) : "VAI!";
+      if (remaining <= 0 && assetsReady) {
+        clearInterval(roundRevealTimer);
+        roundRevealReadyId = roundId;
+        $("#observedCard").classList.remove("is-concealed");
+        $("#playerCard").classList.remove("is-concealed");
+        overlay.hidden = true;
+        updatePenaltyCover();
+        scheduleBotClaim();
+      }
+    };
+    update();
+    roundRevealTimer = setInterval(update, 80);
+    Promise.all([symbolPreloadPromise, roundImagePromise]).then(update);
   }
 
   function setCardButtonsDisabled(disabled) {
@@ -684,7 +1041,7 @@
     const remaining = Math.max(0, Number(player?.penaltyUntil || 0) - now());
     if (remaining <= 0) {
       clearInterval(penaltyTimer);
-      if (!claimPending && !room.round?.locked) setCardButtonsDisabled(false);
+      if (!claimPending && !room.round?.locked && roundRevealReadyId === room.round?.id) setCardButtonsDisabled(false);
       return;
     }
     setCardButtonsDisabled(true);
@@ -693,7 +1050,8 @@
   }
 
   async function handleSymbolTap(symbolId) {
-    if (!room?.round || room.status !== "active" || claimPending || room.round.locked) return;
+    if (!room?.round || room.status !== "active" || claimPending || room.round.locked || roundRevealReadyId !== room.round.id) return;
+    if (Array.isArray(room.round.eligiblePlayerIds) && !room.round.eligiblePlayerIds.includes(state.profile.id)) return;
     const player = currentPlayer();
     if (Number(player?.penaltyUntil || 0) > now()) return;
     claimPending = true;
@@ -708,9 +1066,14 @@
           symbolId: Number(symbolId),
           requestId: uid("claim"),
           clientSentAt: now(),
+          targetId: selectedTargetForRoom()?.id || "",
         }, { timeout: 7000 });
         room = { ...result.room, transport: "remote" };
-        if (result.result === "wrong") {
+        if (result.result === "notReady") {
+          claimPending = false;
+          scheduleRoundReveal();
+        } else if (result.result === "wrong") {
+          claimPending = false;
           currentStreak = 0;
           showFeedback("ERROU — 3 SEGUNDOS!", true, 1200);
           playTone("wrong");
@@ -721,7 +1084,7 @@
           state.profile.roundWins += 1;
           state.profile.bestStreak = Math.max(state.profile.bestStreak, currentStreak);
           saveState();
-          showFeedback("VOCÊ FOI PRIMEIRO!", false, 900);
+          showFeedback(room.mode === "potato" && !room.round?.isTiebreak ? "VOCÊ PASSOU AS CARTAS!" : "VOCÊ FOI PRIMEIRO!", false, 900);
           playTone("win");
           vibrate([35, 35, 70]);
         } else {
@@ -741,9 +1104,17 @@
   }
 
   function handleDemoClaim(playerId, symbolId) {
-    if (!room?.round || room.round.locked) return;
+    if (!room?.round || room.round.locked || roundRevealReadyId !== room.round.id) return;
+    if (Array.isArray(room.round.eligiblePlayerIds) && !room.round.eligiblePlayerIds.includes(playerId)) return;
     const player = room.players.find((entry) => entry.id === playerId);
     if (!player) return;
+    if (playerId === state.profile.id && ["gift", "potato"].includes(room.mode)) {
+      const target = selectedTargetForRoom();
+      if (!target) return;
+      room.round.targetIds[player.id] = target.id;
+      if (room.mode === "gift") room.round.playerCardIds[player.id] = target.topCardId;
+      else room.round.observedCardIds[player.id] = target.topCardId;
+    }
     const expected = commonSymbol(observedCardFor(playerId), room.round.playerCardIds[playerId]);
     if (symbolId !== expected) {
       claimPending = false;
@@ -769,7 +1140,7 @@
       state.profile.roundWins += 1;
       state.profile.bestStreak = Math.max(state.profile.bestStreak, currentStreak);
       saveState();
-      showFeedback("VOCÊ FOI PRIMEIRO!", false, 850);
+      showFeedback(room.mode === "potato" && !room.round.isTiebreak ? "VOCÊ PASSOU AS CARTAS!" : "VOCÊ FOI PRIMEIRO!", false, 850);
       playTone("win");
       vibrate([30, 30, 60]);
     } else {
@@ -783,29 +1154,61 @@
 
   function applyRoundWin(player) {
     player.score += 1;
+    if (room.round?.isTiebreak) return;
     if (room.mode === "tower") {
       player.cardCount += 1;
+      player.topCardId = room.centralCardId;
     } else if (room.mode === "well") {
-      player.remaining = Math.max(0, player.remaining - 1);
+      const discarded = player.pile.shift();
+      room.centralCardId = discarded;
+      player.remaining = player.pile.length;
+      player.topCardId = player.pile[0] ?? null;
+      player.cardCount += 1;
     } else if (room.mode === "potato") {
-      const targets = room.players.filter((entry) => entry.id !== player.id);
-      const target = targets[Math.floor(Math.random() * targets.length)];
-      if (target) target.penaltyCards += 1;
+      const targetId = room.round.targetIds?.[player.id];
+      const target = room.players.find((entry) => entry.id === targetId);
+      if (target) {
+        target.handCount = Number(target.handCount || 0) + Number(player.handCount || 0);
+        target.topCardId = player.topCardId;
+        player.handCount = 0;
+        player.topCardId = null;
+      }
     } else if (room.mode === "gift") {
       const targetId = room.round.targetIds?.[player.id] || room.round.targetId;
       const target = room.players.find((entry) => entry.id === targetId) || room.players.find((entry) => entry.id !== player.id);
-      if (target) target.penaltyCards += 1;
+      if (target) {
+        target.penaltyCards += 1;
+        target.topCardId = room.centralCardId;
+      }
       player.cardCount += 1;
     }
   }
 
   function advanceDemoRound() {
     if (!room || room.status !== "active") return;
-    const wellWinner = room.mode === "well" ? room.players.find((player) => player.remaining <= 0) : null;
-    if (wellWinner || room.roundNumber >= room.roundsTotal) {
-      finishDemoGame(wellWinner?.id || "");
+    if (room.round?.isTiebreak) {
+      finishDemoGame(room.round.claimedBy);
       return;
     }
+    if (room.mode === "potato") {
+      const active = room.players.filter((player) => Number(player.handCount || 0) > 0);
+      if (active.length <= 1) {
+        if (active[0]) active[0].penaltyCards += Number(active[0].handCount || room.players.length);
+        if (room.roundNumber >= room.roundsTotal) return completeDemoGame();
+        room.roundNumber += 1;
+        prepareDemoPotatoHands();
+      } else {
+        room.potatoStep = Number(room.potatoStep || 1) + 1;
+      }
+      prepareDemoRound();
+      lastRenderedRound = "";
+      claimPending = false;
+      renderGame(true);
+      return;
+    }
+    const wellWinner = room.mode === "well" ? room.players.find((player) => player.remaining <= 0) : null;
+    if (wellWinner) return finishDemoGame(wellWinner.id);
+    if (room.roundNumber >= room.roundsTotal) return completeDemoGame();
     room.roundNumber += 1;
     prepareDemoRound();
     lastRenderedRound = "";
@@ -818,15 +1221,27 @@
     const values = room.players.map((player) => {
       if (room.mode === "well") return -player.remaining;
       if (room.mode === "gift" || room.mode === "potato") return -player.penaltyCards;
-      return player.score;
+      return player.cardCount;
     });
     const best = Math.max(...values);
     return room.players.filter((_, index) => values[index] === best);
   }
 
+  function completeDemoGame() {
+    const tied = determineWinners();
+    if (tied.length <= 1) return finishDemoGame(tied[0]?.id || "");
+    room.isTiebreak = true;
+    room.tiebreakPlayerIds = tied.map((player) => player.id);
+    prepareDemoRound();
+    lastRenderedRound = "";
+    claimPending = false;
+    renderGame(true);
+    showFeedback("DESEMPATE!", false, 900);
+  }
+
   function finishDemoGame(forcedWinnerId = "") {
     room.status = "finished";
-    room.winners = determineWinners(forcedWinnerId);
+    room.winners = determineWinners(forcedWinnerId || determineWinners()[0]?.id || "");
     clearTimeout(botTimer);
     const userWon = room.winners.some((winner) => winner.id === state.profile.id);
     state.profile.games += 1;
@@ -851,11 +1266,13 @@
   function scheduleBotClaim() {
     clearTimeout(botTimer);
     if (room?.transport !== "demo" || room.status !== "active" || room.round?.locked) return;
-    const bots = room.players.filter((player) => player.bot);
+    const eligibleIds = new Set(room.round.eligiblePlayerIds || room.players.map((player) => player.id));
+    const bots = room.players.filter((player) => player.bot && eligibleIds.has(player.id) && room.round.playerCardIds?.[player.id] !== undefined);
     if (!bots.length) return;
     const delay = 3300 + Math.random() * 2600;
+    const roundId = room.round.id;
     botTimer = setTimeout(() => {
-      if (!room?.round || room.round.locked || currentScreen !== "game") return;
+      if (!room?.round || room.round.id !== roundId || room.round.locked || currentScreen !== "game") return;
       const bot = bots[Math.floor(Math.random() * bots.length)];
       const answer = commonSymbol(observedCardFor(bot.id), room.round.playerCardIds[bot.id]);
       handleDemoClaim(bot.id, answer);
@@ -865,17 +1282,28 @@
   function stopPolling() {
     clearTimeout(pollTimer);
     pollTimer = 0;
+    pollGeneration += 1;
   }
 
   function startPolling() {
     stopPolling();
-    if (room?.transport !== "remote") return;
+    if (room?.transport !== "remote" || botMutationPending) return;
+    const generation = pollGeneration;
     const poll = async () => {
-      if (!room || room.transport !== "remote") return;
+      if (generation !== pollGeneration || !room || room.transport !== "remote") return;
+      const roomCode = room.code;
       const delay = currentScreen === "game" && room.status === "active" ? ACTIVE_POLL_MS : LOBBY_POLL_MS;
       try {
-        const result = await api("room", { code: room.code, knownRoundId: room.round?.id || "" }, { timeout: 6500 });
+        const result = await api("room", { code: roomCode, knownRoundId: room.round?.id || "" }, { timeout: 6500 });
+        if (generation !== pollGeneration || botMutationPending || !room || room.code !== roomCode) return;
         if (result.room) room = { ...result.room, transport: "remote" };
+        if (room.status === "closed") {
+          stopPolling();
+          room = null;
+          showScreen("home");
+          toast("A sala foi encerrada.");
+          return;
+        }
         if (room.status === "active" && currentScreen !== "game") showScreen("game");
         else if (currentScreen === "game") renderGame();
         else if (currentScreen === "lobby") renderLobby();
@@ -885,8 +1313,10 @@
           return;
         }
       } catch (_) {
+        if (generation !== pollGeneration) return;
         updateSyncPill("demo", "Reconectando…");
       }
+      if (generation !== pollGeneration) return;
       pollTimer = setTimeout(poll, document.visibilityState === "visible" ? delay : 5000);
     };
     pollTimer = setTimeout(poll, 100);
@@ -894,6 +1324,7 @@
 
   function renderProfile() {
     $("#profileBadge").textContent = state.profile.avatar;
+    $("#profileNavIcon").textContent = state.profile.avatar;
     $("#profileNameInput").value = state.profile.name;
     $("#profilePinInput").value = "";
     $("#avatarPicker").innerHTML = AVATARS.map((avatar) => `<button type="button" class="avatar-choice${avatar === state.profile.avatar ? " is-selected" : ""}" data-avatar="${avatar}" aria-label="Avatar ${avatar}">${avatar}</button>`).join("");
@@ -903,6 +1334,25 @@
       <div class="profile-stat"><strong>${winRate}%</strong><span>aproveitamento</span></div>
       <div class="profile-stat"><strong>${state.profile.roundWins}</strong><span>rodadas</span></div>`;
     $("#bestStreakText").textContent = `${state.profile.bestStreak} acertos seguidos`;
+    const admin = isAdminProfile();
+    $("#adminAccessCard").hidden = admin;
+    $("#adminBadgeCard").hidden = !admin;
+    $("#adminSettingsLink").hidden = !admin;
+  }
+
+  async function loginAdministrator(pin) {
+    const result = await api("loginProfile", { id: ADMIN_PROFILE_ID, pin }, { timeout: 10000 });
+    if (!result.profile?.isAdmin || !result.token) throw new Error("Este perfil não tem permissão administrativa.");
+    state.profile = {
+      ...state.profile,
+      ...result.profile,
+      token: result.token,
+      isAdmin: true,
+      pinHash: await hashPinFor(ADMIN_PROFILE_ID, pin),
+    };
+    setSessionPin(pin);
+    saveState();
+    renderProfile();
   }
 
   function showProfileLockIfNeeded() {
@@ -916,6 +1366,14 @@
   }
 
   async function refreshRanking() {
+    const requestId = ++rankingRequestId;
+    $$('[data-rank-tab]').forEach((button) => button.classList.toggle("is-selected", button.dataset.rankTab === rankingTab));
+    if (rankingCache) renderRanking(rankingCache);
+    else {
+      $("#rankingNote").textContent = "Carregando estatísticas…";
+      $("#podium").innerHTML = '<div class="ranking-loading">Carregando…</div>';
+      $("#rankingList").innerHTML = "";
+    }
     let ranking = [{ ...state.profile }];
     const self = { ...state.profile };
     const existing = ranking.findIndex((entry) => entry.id === self.id);
@@ -926,7 +1384,21 @@
         if (Array.isArray(result.ranking) && result.ranking.length) ranking = result.ranking.filter((entry) => !entry.bot);
       } catch (_) { /* O ranking demonstrativo continua disponível. */ }
     }
+    if (requestId !== rankingRequestId) return;
+    rankingCache = ranking;
     renderRanking(ranking);
+  }
+
+  function selectRankingTab(tab) {
+    rankingTab = tab === "rate" ? "rate" : "wins";
+    $$('[data-rank-tab]').forEach((button) => button.classList.toggle("is-selected", button.dataset.rankTab === rankingTab));
+    if (rankingCache) renderRanking(rankingCache);
+    else {
+      $("#rankingNote").textContent = "Carregando estatísticas…";
+      $("#podium").innerHTML = '<div class="ranking-loading">Carregando…</div>';
+      $("#rankingList").innerHTML = "";
+    }
+    refreshRanking();
   }
 
   function renderRanking(ranking) {
@@ -951,12 +1423,11 @@
   }
 
   function renderSyncStatus() {
-    $("#syncUrlInput").value = state.syncUrl;
     const card = $("#syncStatusCard");
-    card.classList.toggle("is-online", Boolean(state.syncUrl));
-    $("#syncStatusTitle").textContent = state.syncUrl ? "Google conectado" : "Modo demonstração";
-    $("#syncStatusDetail").textContent = state.syncUrl ? "Perfis, salas, partidas e ranking sincronizados." : "As partidas de treino funcionam somente neste aparelho.";
-    updateSyncPill(state.syncUrl ? "online" : "demo");
+    card.classList.add("is-online");
+    $("#syncStatusTitle").textContent = "Google conectado";
+    $("#syncStatusDetail").textContent = "Integração fixa e protegida para perfis, salas, partidas e ranking.";
+    updateSyncPill("online");
   }
 
   function vibrate(pattern) {
@@ -1016,45 +1487,61 @@
         state.profile.avatar = avatar.dataset.avatar;
         $$(".avatar-choice").forEach((button) => button.classList.toggle("is-selected", button === avatar));
         $("#profileBadge").textContent = state.profile.avatar;
+        $("#profileNavIcon").textContent = state.profile.avatar;
       }
       const symbol = event.target.closest(".game-card .symbol");
       if (symbol) handleSymbolTap(Number(symbol.dataset.symbolId));
+      const targetPlayer = event.target.closest("[data-target-player]");
+      if (targetPlayer && room && ["gift", "potato"].includes(room.mode)) {
+        selectedTargetId = targetPlayer.dataset.targetPlayer;
+        renderGame(true);
+      }
       const rankTabButton = event.target.closest("[data-rank-tab]");
       if (rankTabButton) {
-        rankingTab = rankTabButton.dataset.rankTab;
-        refreshRanking();
+        selectRankingTab(rankTabButton.dataset.rankTab);
       }
       const openRoomButton = event.target.closest("[data-open-room]");
       if (openRoomButton) {
+        joinSource = "open-list";
         $("#roomCodeInput").value = openRoomButton.dataset.openRoom;
         $("#roomPasswordJoin").value = "";
-        $("#roomPasswordJoin").focus();
-        if (openRoomButton.dataset.roomPassword !== "1") $("#joinRoomForm").requestSubmit();
+        const needsPassword = openRoomButton.dataset.roomPassword === "1";
+        $("#joinPasswordField").hidden = !needsPassword;
+        if (needsPassword) $("#roomPasswordJoin").focus();
+        else $("#joinRoomForm").requestSubmit();
       }
+      const removeBotButton = event.target.closest("[data-remove-bot]");
+      if (removeBotButton) removeTrainingPlayer(removeBotButton.dataset.removeBot);
     });
 
-    $("#quickPlayBtn").addEventListener("click", () => createRoom({ modeId: "tower", maxPlayers: 4, roundsTotal: 8, quick: true, botCount: 3 }));
+    $("#quickPlayBtn").addEventListener("click", () => createRoom({ modeId: "tower", maxPlayers: 4, roundsPreset: "8", quick: true, botCount: 3 }));
     $("#createRoomForm").addEventListener("submit", (event) => {
       event.preventDefault();
       const password = $("#roomPasswordCreate").value.trim();
       if (password && !/^\d{3,8}$/.test(password)) return toast("A senha da sala deve ter de 3 a 8 números.", "error");
       const maxPlayers = Number($("#maxPlayersInput").value);
       const botCount = $("#addBotsInput").checked ? Math.min(3, maxPlayers - 1) : 0;
-      createRoom({ modeId: selectedMode, maxPlayers, roundsTotal: Number($("#roundsInput").value), botCount, password });
+      createRoom({ modeId: selectedMode, maxPlayers, roundsPreset: $("#roundsInput").value, botCount, password });
     });
     $("#joinRoomForm").addEventListener("submit", (event) => {
       event.preventDefault();
-      joinRoom($("#roomCodeInput").value, $("#roomPasswordJoin").value.trim());
+      joinRoom($("#roomCodeInput").value, $("#roomPasswordJoin").value.trim(), joinSource);
     });
-    $("#roomCodeInput").addEventListener("input", (event) => { event.target.value = event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5); });
+    $("#roomCodeInput").addEventListener("input", (event) => {
+      event.target.value = event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5);
+      joinSource = "code";
+      $("#joinPasswordField").hidden = true;
+      $("#roomPasswordJoin").value = "";
+    });
     $("#copyRoomCode").addEventListener("click", async () => {
       try { await navigator.clipboard.writeText(room.code); toast("Código copiado!", "good"); }
       catch (_) { toast(`Código: ${room.code}`); }
     });
     $("#startGameBtn").addEventListener("click", startGame);
     $("#addTrainingPlayerBtn").addEventListener("click", addTrainingPlayer);
+    $("#closeRoomBtn").addEventListener("click", closeCurrentRoom);
     $("#refreshRoomsBtn").addEventListener("click", refreshOpenRooms);
-    $("#leaveGameBtn").addEventListener("click", () => { clearTimeout(botTimer); showScreen("home"); });
+    $("#leaveGameBtn").addEventListener("click", leaveCurrentRoom);
     $("#soundBtn").addEventListener("click", () => { state.sound = !state.sound; saveState(); renderGame(); });
 
     $("#profileForm").addEventListener("submit", async (event) => {
@@ -1068,14 +1555,14 @@
       renderProfile();
       if (state.syncUrl) {
         try {
-          await ensureRemoteProfile();
+          await ensureRemoteProfile(true);
           toast("Perfil salvo e protegido.", "good");
         }
         catch (error) { toast(error.message, "error"); }
       } else toast("Perfil salvo e protegido neste aparelho.", "good");
     });
 
-    [$("#profilePinInput"), $("#pinUnlockInput"), $("#roomPasswordCreate"), $("#roomPasswordJoin")].forEach((input) => {
+    [$("#profilePinInput"), $("#pinUnlockInput"), $("#adminPinInput"), $("#roomPasswordCreate"), $("#roomPasswordJoin")].forEach((input) => {
       input.addEventListener("input", () => { input.value = input.value.replace(/\D/g, ""); });
     });
     $("#pinUnlockForm").addEventListener("submit", async (event) => {
@@ -1093,37 +1580,31 @@
     });
     $("#pinDialog").addEventListener("cancel", (event) => event.preventDefault());
 
-    $("#syncForm").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const value = $("#syncUrlInput").value.trim().replace(/\/+$/, "");
-      if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/i.test(value)) return toast("Use a URL /exec do Apps Script.", "error");
-      const previous = state.syncUrl;
-      state.syncUrl = value;
-      saveState();
-      try {
-        const status = await api("status", {}, { timeout: 10000 });
-        if (!status.initialized) throw new Error("O script ainda não inicializou a planilha.");
-        await ensureRemoteProfile();
-        renderSyncStatus();
-        toast("Google conectado com sucesso!", "good");
-      } catch (error) {
-        state.syncUrl = previous;
-        saveState();
-        renderSyncStatus();
-        toast(error.message, "error");
-      }
+    $("#adminLoginBtn").addEventListener("click", () => {
+      $("#adminPinInput").value = "";
+      $("#adminPinError").hidden = true;
+      $("#adminDialog").showModal();
+      setTimeout(() => $("#adminPinInput").focus(), 80);
     });
-    $("#clearSyncBtn").addEventListener("click", () => {
-      state.syncUrl = "";
-      state.profile.token = "";
-      saveState();
-      renderSyncStatus();
-      toast("Sincronização desconectada.");
+    $("#adminCancelBtn").addEventListener("click", () => $("#adminDialog").close());
+    $("#adminLoginForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const pin = $("#adminPinInput").value;
+      try {
+        await loginAdministrator(pin);
+        $("#adminDialog").close();
+        toast("Administrador conectado.", "good");
+      } catch (error) {
+        $("#adminPinError").textContent = error.message;
+        $("#adminPinError").hidden = false;
+        $("#adminPinInput").value = "";
+        $("#adminPinInput").focus();
+      }
     });
 
     $("#playAgainBtn").addEventListener("click", () => {
       $("#resultDialog").close();
-      createRoom({ modeId: room?.mode || "tower", maxPlayers: room?.maxPlayers || 4, roundsTotal: room?.roundsTotal || 8, quick: true, botCount: room?.players?.filter((player) => player.bot).length || 0 });
+      createRoom({ modeId: room?.mode || "tower", maxPlayers: room?.maxPlayers || 4, roundsPreset: room?.roundsPreset || "8", quick: true, botCount: room?.players?.filter((player) => player.bot).length || 0 });
     });
     $("#closeResultBtn").addEventListener("click", () => { $("#resultDialog").close(); showScreen("home"); });
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && room?.transport === "remote") startPolling(); });
@@ -1138,8 +1619,19 @@
     setRoomTab("create");
     showScreen("home");
     showProfileLockIfNeeded();
+    api("status", {}, { timeout: 10000 })
+      .then((status) => { if (Number(status.version || 0) < 4) updateSyncPill("busy", "Atualize o Code.gs"); })
+      .catch(() => updateSyncPill("demo", "Reconectando…"));
     if (!validateDeck()) console.error("Falha na validação matemática do baralho.");
-    if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("service-worker.js").catch(() => {});
+    if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (refreshing) return;
+        refreshing = true;
+        location.reload();
+      });
+      navigator.serviceWorker.register("service-worker.js").then((registration) => registration.update()).catch(() => {});
+    }
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

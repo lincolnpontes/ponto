@@ -13,6 +13,8 @@ const DATABASE_PROPERTY = 'PONTO_DATABASE_ID';
 const SECRET_PROPERTY = 'PONTO_TOKEN_SECRET';
 const ROOM_TTL_MS = 12 * 60 * 60 * 1000;
 const PENALTY_MS = 3000;
+const ADMIN_PROFILE_ID = 'admin_lincoln';
+const ADMIN_INITIAL_PIN = '784';
 
 const SHEETS = {
   PROFILES: ['id', 'name', 'avatar', 'tokenHash', 'pinHash', 'games', 'wins', 'roundWins', 'bestStreak', 'createdAt', 'lastSeenAt'],
@@ -50,14 +52,17 @@ function dispatch_(request) {
   ensureDatabase_();
 
   if (action === 'status') {
-    return { initialized: true, version: 1, spreadsheetUrl: getDatabase_().getUrl() };
+    return { initialized: true, version: 4, spreadsheetUrl: getDatabase_().getUrl() };
   }
   if (action === 'createProfile') return withLock_(() => createProfile_(request, payload));
+  if (action === 'loginProfile') return withLock_(() => loginProfile_(payload));
   if (action === 'updateProfile') return withLock_(() => updateProfile_(request, payload));
   if (action === 'createRoom') return withLock_(() => createRoom_(request, payload));
   if (action === 'openRooms') return openRooms_();
   if (action === 'joinRoom') return withLock_(() => joinRoom_(request, payload));
   if (action === 'addBot') return withLock_(() => addBot_(request, payload));
+  if (action === 'removeBot') return withLock_(() => removeBot_(request, payload));
+  if (action === 'closeRoom') return withLock_(() => closeRoom_(request, payload));
   if (action === 'leaveRoom') return withLock_(() => leaveRoom_(request, payload));
   if (action === 'startGame') return withLock_(() => startGame_(request, payload));
   if (action === 'claim') return withLock_(() => claim_(request, payload));
@@ -117,6 +122,7 @@ function ensureDatabase_() {
       sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     }
   });
+  ensureAdminProfile_();
   return spreadsheet;
 }
 
@@ -155,7 +161,8 @@ function cleanName_(value) {
 }
 
 function cleanAvatar_(value) {
-  return String(value || '⚡').replace(/[<>\n\r]/g, '').trim().slice(0, 8) || '⚡';
+  const avatar = String(value || '🦊').replace(/[<>\n\r]/g, '').trim().slice(0, 8) || '🦊';
+  return ['⚡', '🐙'].indexOf(avatar) >= 0 ? '🦊' : avatar;
 }
 
 function randomToken_() {
@@ -176,9 +183,10 @@ function secretHash_(scope, value) {
 
 function profileFromRow_(row) {
   return {
-    id: String(row.id), name: String(row.name), avatar: String(row.avatar),
+    id: String(row.id), name: String(row.name), avatar: cleanAvatar_(row.avatar),
     games: Number(row.games || 0), wins: Number(row.wins || 0),
     roundWins: Number(row.roundWins || 0), bestStreak: Number(row.bestStreak || 0),
+    isAdmin: String(row.id) === ADMIN_PROFILE_ID,
   };
 }
 
@@ -216,6 +224,37 @@ function createProfile_(request, payload) {
   return { token, profile: profileFromRow_(row) };
 }
 
+function ensureAdminProfile_() {
+  const existing = findProfile_(ADMIN_PROFILE_ID);
+  if (existing) {
+    const cleanedAvatar = cleanAvatar_(existing.avatar);
+    if (cleanedAvatar !== String(existing.avatar)) {
+      existing.avatar = cleanedAvatar;
+      writeRow_('PROFILES', existing._row, existing);
+    }
+    return;
+  }
+  const token = randomToken_();
+  append_('PROFILES', {
+    id: ADMIN_PROFILE_ID, name: 'Lincoln', avatar: '🦊',
+    tokenHash: tokenHash_(token), pinHash: secretHash_(`profile:${ADMIN_PROFILE_ID}`, ADMIN_INITIAL_PIN),
+    games: 0, wins: 0, roundWins: 0, bestStreak: 0,
+    createdAt: Date.now(), lastSeenAt: Date.now(),
+  });
+}
+
+function loginProfile_(payload) {
+  const id = String(payload.id || '');
+  const pin = String(payload.pin || '');
+  const row = findProfile_(id);
+  if (!row || !/^\d{3}$/.test(pin) || row.pinHash !== secretHash_(`profile:${id}`, pin)) throw new Error('Perfil ou PIN incorretos.');
+  const token = randomToken_();
+  row.tokenHash = tokenHash_(token);
+  row.lastSeenAt = Date.now();
+  writeRow_('PROFILES', row._row, row);
+  return { token, profile: profileFromRow_(row) };
+}
+
 function updateProfile_(request, payload) {
   const row = requireProfile_(request);
   row.name = cleanName_(payload.name);
@@ -237,8 +276,10 @@ function roomCode_() {
   return code;
 }
 
-function uniqueRoomCode_() {
+function uniqueRoomCode_(preferred) {
   const existing = new Set(rows_('ROOMS').map((row) => String(row.code)));
+  const requested = String(preferred || '').trim().toUpperCase();
+  if (/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{5}$/.test(requested) && !existing.has(requested)) return requested;
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const code = roomCode_();
     if (!existing.has(code)) return code;
@@ -256,7 +297,7 @@ function playerFromProfile_(profile, isHost) {
 
 function botPlayer_(index) {
   const names = ['Bia', 'Caio', 'Malu', 'Nina', 'Theo', 'Zeca', 'Iara'];
-  const avatars = ['🦊', '🐯', '🐸', '🦄', '🐼', '🦁', '🐙'];
+  const avatars = ['🦊', '🐯', '🐸', '🦄', '🐼', '🦁', '🐨'];
   return {
     id: `bot_${Utilities.getUuid()}`, name: names[index % names.length], avatar: avatars[index % avatars.length],
     isHost: false, ready: true, score: 0, cardCount: 0, remaining: 8,
@@ -266,17 +307,33 @@ function botPlayer_(index) {
 
 function createRoom_(request, payload) {
   const profile = requireProfile_(request);
+  const timestamp = Date.now();
+  const ownedRooms = rows_('ROOMS').map((row) => {
+    try {
+      const parsed = JSON.parse(row.stateJson);
+      parsed._row = row._row;
+      return parsed;
+    } catch (_) { return null; }
+  }).filter((room) => room && String(room.hostId) === String(profile.id) && ['lobby', 'active'].indexOf(room.status) >= 0 && Number(room.expiresAt || 0) > timestamp)
+    .sort((a, b) => (a.status === 'active' ? -1 : 0) - (b.status === 'active' ? -1 : 0) || Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+  if (ownedRooms.length) {
+    const primary = ownedRooms[0];
+    ownedRooms.slice(1).forEach((duplicate) => {
+      duplicate.status = 'closed';
+      duplicate.closedAt = timestamp;
+      saveRoom_(duplicate);
+    });
+    return { room: publicRoom_(primary), reused: true };
+  }
   const mode = MODE_LIMITS[payload.mode] ? String(payload.mode) : 'tower';
   const maxPlayers = Math.max(2, Math.min(Number(payload.maxPlayers || 4), MODE_LIMITS[mode]));
-  const allowedRounds = [8, 16, 32, 55];
-  const requestedRounds = Number(payload.roundsTotal || 16);
-  const roundsTotal = allowedRounds.indexOf(requestedRounds) >= 0 ? requestedRounds : 16;
+  const roundsPreset = ['8', '16', '32', '55'].indexOf(String(payload.roundsPreset || '16')) >= 0 ? String(payload.roundsPreset || '16') : '16';
+  const roundsTotal = Number(roundsPreset);
   const password = String(payload.password || '');
   if (password && !/^\d{3,8}$/.test(password)) throw new Error('A senha da sala deve ter de 3 a 8 números.');
-  const code = uniqueRoomCode_();
-  const timestamp = Date.now();
+  const code = uniqueRoomCode_(payload.requestedCode);
   const room = {
-    code, hostId: String(profile.id), mode, maxPlayers, roundsTotal,
+    code, hostId: String(profile.id), mode, maxPlayers, roundsPreset, roundsTotal,
     theme: 'letters-numbers', status: 'lobby', createdAt: timestamp, startedAt: 0,
     updatedAt: timestamp, expiresAt: timestamp + ROOM_TTL_MS,
     hasPassword: Boolean(password), passwordHash: password ? secretHash_(`room:${code}`, password) : '',
@@ -322,6 +379,7 @@ function publicRoom_(room) {
   delete copy.deckCursor;
   delete copy.recentRequestIds;
   delete copy.passwordHash;
+  (copy.players || []).forEach((player) => { delete player.pile; });
   return copy;
 }
 
@@ -343,7 +401,7 @@ function joinRoom_(request, payload) {
   const profile = requireProfile_(request);
   const room = getRoom_(payload.code);
   if (room.status !== 'lobby') throw new Error('Essa partida já começou.');
-  if (room.hasPassword && room.passwordHash !== secretHash_(`room:${room.code}`, String(payload.password || ''))) throw new Error('Senha da sala incorreta.');
+  if (room.hasPassword && String(payload.source || '') === 'open-list' && room.passwordHash !== secretHash_(`room:${room.code}`, String(payload.password || ''))) throw new Error('Senha da sala incorreta.');
   let player = room.players.find((entry) => String(entry.id) === String(profile.id));
   if (!player) {
     if (room.players.length >= room.maxPlayers) throw new Error('A sala está cheia.');
@@ -364,9 +422,36 @@ function addBot_(request, payload) {
   if (room.hostId !== String(profile.id)) throw new Error('Apenas o anfitrião pode adicionar treino.');
   if (room.status !== 'lobby') throw new Error('A partida já começou.');
   if (room.players.length >= room.maxPlayers) throw new Error('A sala está cheia.');
-  room.players.push(botPlayer_(room.players.filter((player) => player.bot).length));
+  const bot = botPlayer_(room.players.filter((player) => player.bot).length);
+  room.players.push(bot);
   saveRoom_(room);
   event_('BOT_ADDED', room.code, profile.id, {});
+  return { room: publicRoom_(room), botId: bot.id, clientBotId: String(payload.clientBotId || '') };
+}
+
+function removeBot_(request, payload) {
+  const profile = requireProfile_(request);
+  const room = getRoom_(payload.code);
+  if (room.hostId !== String(profile.id)) throw new Error('Apenas o anfitrião pode remover treino.');
+  if (room.status !== 'lobby') throw new Error('A partida já começou.');
+  const botId = String(payload.botId || '');
+  const bot = room.players.find((player) => String(player.id) === botId && player.bot);
+  if (!bot) throw new Error('Jogador de treino não encontrado.');
+  room.players = room.players.filter((player) => String(player.id) !== botId);
+  saveRoom_(room);
+  event_('BOT_REMOVED', room.code, profile.id, { botId });
+  return { room: publicRoom_(room) };
+}
+
+function closeRoom_(request, payload) {
+  const profile = requireProfile_(request);
+  const room = getRoom_(payload.code);
+  if (room.hostId !== String(profile.id)) throw new Error('Apenas o anfitrião pode encerrar a sala.');
+  room.status = 'closed';
+  room.closedAt = Date.now();
+  room.round = null;
+  saveRoom_(room);
+  event_('ROOM_CLOSED', room.code, profile.id, {});
   return { room: publicRoom_(room) };
 }
 
@@ -422,55 +507,115 @@ function startGame_(request, payload) {
   room.roundNumber = 1;
   room.deckOrder = seededShuffle_(Array.from({ length: 57 }, (_, index) => index), `${room.code}:${room.startedAt}`);
   room.deckCursor = 0;
+  room.roundsPreset = ['8', '16', '32', '55'].indexOf(String(room.roundsPreset || '16')) >= 0 ? String(room.roundsPreset || '16') : '16';
+  room.roundsTotal = resolveRoundsTotal_(room.mode, room.roundsPreset, room.players.length);
+  room.isTiebreak = false;
+  room.tiebreakPlayerIds = [];
+  room.potatoStep = 0;
   room.players.forEach((player) => {
-    player.score = 0; player.cardCount = 0; player.remaining = 8;
+    player.score = 0; player.cardCount = 0; player.remaining = 0;
     player.penaltyCards = 0; player.penaltyUntil = 0; player.currentStreak = 0;
+    player.pile = []; player.handCount = 0; player.topCardId = null;
   });
-  prepareRound_(room);
+  if (room.mode === 'well') {
+    room.centralCardId = takeCard_(room);
+    let playerIndex = 0;
+    while (room.deckCursor < room.deckOrder.length) {
+      room.players[playerIndex % room.players.length].pile.push(takeCard_(room));
+      playerIndex += 1;
+    }
+    room.players.forEach((player) => {
+      player.remaining = player.pile.length;
+      player.topCardId = player.pile.length ? player.pile[0] : null;
+    });
+  } else if (room.mode === 'potato') {
+    preparePotatoHands_(room);
+  } else {
+    room.players.forEach((player) => { player.topCardId = takeCard_(room); });
+  }
+  prepareRound_(room, true);
   saveRoom_(room);
   event_('GAME_STARTED', room.code, profile.id, { players: room.players.length, mode: room.mode });
   return { room: publicRoom_(room) };
 }
 
-function takeCard_(room, used) {
-  for (let attempt = 0; attempt < 57; attempt += 1) {
-    const cardId = room.deckOrder[room.deckCursor % room.deckOrder.length];
-    room.deckCursor += 1;
-    if (!used[cardId]) return cardId;
-  }
-  return Math.floor(Math.random() * 57);
+function resolveRoundsTotal_(_mode, preset, _playerCount) {
+  const normalized = ['8', '16', '32', '55'].indexOf(String(preset || '16')) >= 0 ? String(preset || '16') : '16';
+  return Number(normalized);
 }
 
-function prepareRound_(room) {
-  const used = {};
-  const central = takeCard_(room, used); used[central] = true;
-  const playerCardIds = {};
-  room.players.forEach((player) => {
-    const cardId = takeCard_(room, used); used[cardId] = true;
-    playerCardIds[player.id] = cardId;
-  });
+function takeCard_(room) {
+  if (!room.deckOrder || !room.deckOrder.length) room.deckOrder = seededShuffle_(Array.from({ length: 57 }, (_, index) => index), `${room.code}:${Date.now()}`);
+  if (room.deckCursor >= room.deckOrder.length) {
+    room.deckOrder = seededShuffle_(room.deckOrder, `${room.code}:extra:${room.deckCursor}:${Date.now()}`);
+    room.deckCursor = 0;
+  }
+  const cardId = room.deckOrder[room.deckCursor];
+  room.deckCursor += 1;
+  return cardId;
+}
 
+function preparePotatoHands_(room) {
+  room.potatoStep = 1;
+  room.players.forEach((player) => {
+    player.topCardId = takeCard_(room);
+    player.handCount = 1;
+  });
+}
+
+function prepareRound_(room, firstRound) {
+  const playerCardIds = {};
   const observedCardIds = {};
   const targetIds = {};
-  room.players.forEach((player, index) => {
-    if (room.mode === 'gift') {
-      const target = room.players[(index + 1) % room.players.length];
+  let central = room.centralCardId;
+  let eligiblePlayerIds = room.players.map((player) => String(player.id));
+
+  if (room.isTiebreak) {
+    eligiblePlayerIds = room.tiebreakPlayerIds.slice();
+    central = takeCard_(room);
+    eligiblePlayerIds.forEach((playerId) => {
+      playerCardIds[playerId] = takeCard_(room);
+      observedCardIds[playerId] = central;
+    });
+  } else if (room.mode === 'potato') {
+    const active = room.players.filter((player) => Number(player.handCount || 0) > 0);
+    eligiblePlayerIds = active.map((player) => String(player.id));
+    active.forEach((player, index) => {
+      const target = active[(index + 1) % active.length];
+      playerCardIds[player.id] = player.topCardId;
+      observedCardIds[player.id] = target.topCardId;
       targetIds[player.id] = target.id;
-      observedCardIds[player.id] = playerCardIds[target.id];
-    } else {
+    });
+    central = null;
+  } else {
+    if (room.mode === 'tower' || room.mode === 'gift') room.centralCardId = takeCard_(room);
+    central = room.centralCardId;
+    room.players.forEach((player, index) => {
+      if (room.mode === 'gift') {
+        const offset = 1 + ((room.roundNumber - 1) % Math.max(1, room.players.length - 1));
+        const target = room.players[(index + offset) % room.players.length];
+        targetIds[player.id] = target.id;
+        playerCardIds[player.id] = target.topCardId;
+      } else {
+        playerCardIds[player.id] = player.topCardId;
+      }
       observedCardIds[player.id] = central;
-    }
-  });
+    });
+  }
+
+  const revealAt = Date.now() + (firstRound ? 3500 : 700);
 
   room.round = {
-    id: `${room.code}_${room.roundNumber}_${Utilities.getUuid()}`,
+    id: `${room.code}_${room.roundNumber}_${room.potatoStep || 0}_${Utilities.getUuid()}`,
     number: room.roundNumber,
     observedCardId: central,
     observedCardIds,
     playerCardIds,
     targetIds,
-    claimedBy: '', claimedAt: 0, locked: false, nextAt: 0, startedAt: Date.now(),
-    botClaimAt: room.players.some((player) => player.bot) ? Date.now() + 3200 + Math.floor(Math.random() * 2600) : 0,
+    eligiblePlayerIds,
+    isTiebreak: Boolean(room.isTiebreak),
+    claimedBy: '', claimedAt: 0, locked: false, nextAt: 0, revealAt, startedAt: Date.now(),
+    botClaimAt: room.players.some((player) => player.bot && eligiblePlayerIds.indexOf(String(player.id)) >= 0) ? revealAt + 2400 + Math.floor(Math.random() * 2400) : 0,
   };
 }
 
@@ -520,11 +665,27 @@ function claim_(request, payload) {
     const winner = room.players.find((entry) => entry.id === room.round?.claimedBy);
     return { result: 'late', winnerName: winner ? winner.name : '', room: publicRoom_(room) };
   }
+  if (Array.isArray(room.round.eligiblePlayerIds) && room.round.eligiblePlayerIds.indexOf(String(player.id)) < 0) return { result: 'late', room: publicRoom_(room) };
+  if (Number(room.round.revealAt || 0) > Date.now()) return { result: 'notReady', room: publicRoom_(room) };
 
-  const observed = room.round.observedCardIds && room.round.observedCardIds[player.id] !== undefined
+  let observed = room.round.observedCardIds && room.round.observedCardIds[player.id] !== undefined
     ? room.round.observedCardIds[player.id]
     : room.round.observedCardId;
-  const expected = commonSymbol_(observed, room.round.playerCardIds[player.id]);
+  let playerCardId = room.round.playerCardIds[player.id];
+  if (!room.round.isTiebreak && room.mode === 'gift') {
+    const target = room.players.find((entry) => String(entry.id) === String(payload.targetId) && String(entry.id) !== String(player.id));
+    if (!target || target.topCardId === null || target.topCardId === undefined) throw new Error('Escolha outro jogador para receber a carta.');
+    room.round.targetIds[player.id] = target.id;
+    observed = room.centralCardId;
+    playerCardId = target.topCardId;
+  } else if (!room.round.isTiebreak && room.mode === 'potato') {
+    const target = room.players.find((entry) => String(entry.id) === String(payload.targetId) && String(entry.id) !== String(player.id) && Number(entry.handCount || 0) > 0);
+    if (!target || Number(player.handCount || 0) <= 0) throw new Error('Escolha um jogador que ainda esteja com cartas.');
+    room.round.targetIds[player.id] = target.id;
+    observed = target.topCardId;
+    playerCardId = player.topCardId;
+  }
+  const expected = commonSymbol_(observed, playerCardId);
   if (Number(payload.symbolId) !== Number(expected)) {
     player.penaltyUntil = Date.now() + PENALTY_MS;
     player.currentStreak = 0;
@@ -552,20 +713,32 @@ function claim_(request, payload) {
 }
 
 function applyWin_(room, player) {
+  if (room.round && room.round.isTiebreak) return;
   if (room.mode === 'tower') {
     player.cardCount = Number(player.cardCount || 0) + 1;
+    player.topCardId = room.centralCardId;
   } else if (room.mode === 'well') {
-    player.remaining = Math.max(0, Number(player.remaining || 8) - 1);
+    const discarded = Array.isArray(player.pile) && player.pile.length ? player.pile.shift() : player.topCardId;
+    room.centralCardId = discarded;
+    player.remaining = Array.isArray(player.pile) ? player.pile.length : Math.max(0, Number(player.remaining || 0) - 1);
+    player.topCardId = Array.isArray(player.pile) && player.pile.length ? player.pile[0] : null;
+    player.cardCount = Number(player.cardCount || 0) + 1;
   } else if (room.mode === 'potato') {
-    const targets = room.players.filter((entry) => entry.id !== player.id);
-    if (targets.length) {
-      const target = targets[room.roundNumber % targets.length];
-      target.penaltyCards = Number(target.penaltyCards || 0) + 1;
+    const targetId = room.round.targetIds && room.round.targetIds[player.id];
+    const target = room.players.find((entry) => String(entry.id) === String(targetId));
+    if (target) {
+      target.handCount = Number(target.handCount || 0) + Number(player.handCount || 0);
+      target.topCardId = player.topCardId;
+      player.handCount = 0;
+      player.topCardId = null;
     }
   } else if (room.mode === 'gift') {
     const targetId = room.round.targetIds && room.round.targetIds[player.id];
     const target = room.players.find((entry) => entry.id === targetId) || room.players.find((entry) => entry.id !== player.id);
-    if (target) target.penaltyCards = Number(target.penaltyCards || 0) + 1;
+    if (target) {
+      target.penaltyCards = Number(target.penaltyCards || 0) + 1;
+      target.topCardId = room.centralCardId;
+    }
     player.cardCount = Number(player.cardCount || 0) + 1;
   }
 }
@@ -579,10 +752,11 @@ function updateRoundStats_(profileRow, streak) {
 
 function maybeAdvanceRoom_(room) {
   if (room.status !== 'active' || !room.round) return room;
-  if (!room.round.locked && Number(room.round.botClaimAt || 0) > 0 && Number(room.round.botClaimAt) <= Date.now()) {
-    const bots = room.players.filter((player) => player.bot);
+  if (!room.round.locked && Number(room.round.revealAt || 0) <= Date.now() && Number(room.round.botClaimAt || 0) > 0 && Number(room.round.botClaimAt) <= Date.now()) {
+    const eligibleIds = room.round.eligiblePlayerIds || room.players.map((player) => String(player.id));
+    const bots = room.players.filter((player) => player.bot && eligibleIds.indexOf(String(player.id)) >= 0 && room.round.playerCardIds[player.id] !== undefined);
     if (bots.length) {
-      const bot = bots[room.roundNumber % bots.length];
+      const bot = bots[(room.roundNumber + Number(room.potatoStep || 0)) % bots.length];
       room.round.locked = true;
       room.round.claimedBy = bot.id;
       room.round.claimedAt = Date.now();
@@ -595,16 +769,53 @@ function maybeAdvanceRoom_(room) {
     }
   }
   if (!room.round.locked || Number(room.round.nextAt || 0) > Date.now()) return room;
+  if (room.round.isTiebreak) {
+    finishRoom_(room, room.round.claimedBy);
+    saveRoom_(room);
+    return room;
+  }
+  if (room.mode === 'potato') {
+    const active = room.players.filter((player) => Number(player.handCount || 0) > 0);
+    if (active.length <= 1) {
+      if (active[0]) active[0].penaltyCards = Number(active[0].penaltyCards || 0) + Number(active[0].handCount || room.players.length);
+      if (room.roundNumber >= room.roundsTotal) {
+        completeRoomOrTiebreak_(room, '');
+        saveRoom_(room);
+        return room;
+      }
+      room.roundNumber += 1;
+      preparePotatoHands_(room);
+    } else {
+      room.potatoStep = Number(room.potatoStep || 1) + 1;
+    }
+    prepareRound_(room, false);
+    saveRoom_(room);
+    return room;
+  }
   const wellWinner = room.mode === 'well' ? room.players.find((player) => Number(player.remaining || 0) <= 0) : null;
-  if (wellWinner || room.roundNumber >= room.roundsTotal) {
-    finishRoom_(room, wellWinner ? wellWinner.id : '');
+  if (wellWinner) {
+    finishRoom_(room, wellWinner.id);
+    saveRoom_(room);
+    return room;
+  }
+  if (room.roundNumber >= room.roundsTotal) {
+    completeRoomOrTiebreak_(room, '');
     saveRoom_(room);
     return room;
   }
   room.roundNumber += 1;
-  prepareRound_(room);
+  prepareRound_(room, false);
   saveRoom_(room);
   return room;
+}
+
+function completeRoomOrTiebreak_(room, forcedWinnerId) {
+  if (forcedWinnerId) return finishRoom_(room, forcedWinnerId);
+  const tiedIds = determineWinnerIds_(room, '');
+  if (tiedIds.length <= 1) return finishRoom_(room, tiedIds[0] || '');
+  room.isTiebreak = true;
+  room.tiebreakPlayerIds = tiedIds;
+  prepareRound_(room, false);
 }
 
 function determineWinnerIds_(room, forcedId) {
@@ -612,7 +823,7 @@ function determineWinnerIds_(room, forcedId) {
   const values = room.players.map((player) => {
     if (room.mode === 'well') return -Number(player.remaining || 0);
     if (room.mode === 'gift' || room.mode === 'potato') return -Number(player.penaltyCards || 0);
-    return Number(player.score || 0);
+    return Number(player.cardCount || 0);
   });
   const best = Math.max.apply(null, values);
   return room.players.filter((_, index) => values[index] === best).map((player) => String(player.id));
@@ -622,7 +833,7 @@ function finishRoom_(room, forcedWinnerId) {
   if (room.finalized) return;
   room.status = 'finished';
   room.finishedAt = Date.now();
-  room.winnerIds = determineWinnerIds_(room, forcedWinnerId);
+  room.winnerIds = forcedWinnerId ? [String(forcedWinnerId)] : determineWinnerIds_(room, '');
   room.winnerId = room.winnerIds[0] || '';
   room.finalized = true;
 
