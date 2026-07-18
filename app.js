@@ -5,7 +5,7 @@
   const ACTIVE_POLL_MS = 250;
   const LOBBY_POLL_MS = 500;
   const PENALTY_MS = 3000;
-  const ASSET_VERSION = "15";
+  const ASSET_VERSION = "16";
   const THEMES = Object.freeze({
     "letters-numbers": { name: "Maiúsculas & números", root: "themes/letters-numbers" },
     "rescue-heroes": { name: "Heróis do Resgate", root: "themes/rescue-heroes" },

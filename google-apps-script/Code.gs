@@ -15,11 +15,12 @@ const ROOM_TTL_MS = 12 * 60 * 60 * 1000;
 const PENALTY_MS = 3000;
 const ADMIN_PROFILE_ID = 'admin_lincoln';
 const ADMIN_INITIAL_PIN = '0784';
-const BACKEND_VERSION = 6;
+const BACKEND_VERSION = 8;
 const CACHE_SECONDS = 21600;
-const FIRST_ROUND_LEAD_MS = 5000;
+const FIRST_ROUND_LEAD_MS = 4000;
 const NEXT_ROUND_LEAD_MS = 2200;
 const ROUND_RESULT_MS = 1200;
+const ROUND_READY_DEADLINE_MS = 15000;
 
 const SHEETS = {
   PROFILES: ['id', 'name', 'avatar', 'tokenHash', 'pinHash', 'games', 'wins', 'roundWins', 'bestStreak', 'createdAt', 'lastSeenAt'],
@@ -29,6 +30,7 @@ const SHEETS = {
 };
 
 const MODE_LIMITS = { tower: 8, well: 8, potato: 4, gift: 4 };
+const THEME_IDS = ['letters-numbers', 'rescue-heroes'];
 
 function doGet() {
   const db = ensureDatabase_();
@@ -72,6 +74,7 @@ function dispatch_(request) {
   if (action === 'closeRoom') return withLock_(() => closeRoom_(request, payload));
   if (action === 'leaveRoom') return withLock_(() => leaveRoom_(request, payload));
   if (action === 'startGame') return withLock_(() => startGame_(request, payload));
+  if (action === 'roundReady') return withLock_(() => roundReady_(request, payload));
   if (action === 'claim') return withLock_(() => claim_(request, payload));
   if (action === 'room') return readRoom_(request, payload);
   if (action === 'ranking') return ranking_();
@@ -397,12 +400,13 @@ function createRoom_(request, payload) {
   const maxPlayers = Math.max(2, Math.min(Number(payload.maxPlayers || 4), MODE_LIMITS[mode]));
   const roundsPreset = ['8', '16', '32', '55'].indexOf(String(payload.roundsPreset || '16')) >= 0 ? String(payload.roundsPreset || '16') : '16';
   const roundsTotal = Number(roundsPreset);
+  const theme = THEME_IDS.indexOf(String(payload.theme || 'letters-numbers')) >= 0 ? String(payload.theme) : 'letters-numbers';
   const password = String(payload.password || '');
   if (password && !/^\d{4}$/.test(password)) throw new Error('A senha da sala deve ter exatamente 4 números.');
   const code = uniqueRoomCode_(payload.requestedCode);
   const room = {
     code, hostId: String(profile.id), mode, maxPlayers, roundsPreset, roundsTotal,
-    theme: 'letters-numbers', status: 'lobby', createdAt: timestamp, startedAt: 0,
+    theme, status: 'lobby', createdAt: timestamp, startedAt: 0,
     updatedAt: timestamp, expiresAt: timestamp + ROOM_TTL_MS,
     hasPassword: Boolean(password), passwordHash: password ? secretHash_(`room:${code}`, password) : '',
     players: [playerFromProfile_(profile, true)], roundNumber: 0, round: null,
@@ -411,7 +415,7 @@ function createRoom_(request, payload) {
   const botCount = Math.min(Math.max(0, Number(payload.botCount || 0)), maxPlayers - 1);
   for (let index = 0; index < botCount; index += 1) room.players.push(botPlayer_(index));
   saveRoom_(room);
-  event_('ROOM_CREATED', room.code, profile.id, { mode, maxPlayers });
+  event_('ROOM_CREATED', room.code, profile.id, { mode, maxPlayers, theme });
   return { room: publicRoom_(room) };
 }
 
@@ -691,7 +695,6 @@ function prepareRound_(room, firstRound) {
   }
 
   const roundPreparedAt = Date.now();
-  const revealAt = roundPreparedAt + (firstRound ? FIRST_ROUND_LEAD_MS : NEXT_ROUND_LEAD_MS);
 
   room.round = {
     id: `${room.code}_${room.roundNumber}_${room.potatoStep || 0}_${Utilities.getUuid()}`,
@@ -702,9 +705,51 @@ function prepareRound_(room, firstRound) {
     targetIds,
     eligiblePlayerIds,
     isTiebreak: Boolean(room.isTiebreak),
-    claimedBy: '', claimedAt: 0, locked: false, nextAt: 0, revealAt, startedAt: roundPreparedAt,
-    botClaimAt: room.players.some((player) => player.bot && eligiblePlayerIds.indexOf(String(player.id)) >= 0) ? revealAt + 2400 + Math.floor(Math.random() * 2400) : 0,
+    claimedBy: '', claimedAt: 0, locked: false, nextAt: 0,
+    revealAt: 0, countdownStartedAt: 0,
+    countdownMs: firstRound ? FIRST_ROUND_LEAD_MS : NEXT_ROUND_LEAD_MS,
+    readyPlayerIds: [], readyDeadlineAt: roundPreparedAt + ROUND_READY_DEADLINE_MS,
+    startedAt: roundPreparedAt, botClaimAt: 0,
   };
+}
+
+function requiredRoundReadyIds_(room) {
+  const eligible = new Set((room.round.eligiblePlayerIds || room.players.map((player) => String(player.id))).map(String));
+  return room.players
+    .filter((player) => !player.bot && eligible.has(String(player.id)))
+    .map((player) => String(player.id));
+}
+
+function beginRoundCountdown_(room) {
+  if (!room.round || Number(room.round.revealAt || 0) > 0) return false;
+  const timestamp = Date.now();
+  room.round.countdownStartedAt = timestamp;
+  room.round.revealAt = timestamp + Math.max(1200, Number(room.round.countdownMs || NEXT_ROUND_LEAD_MS));
+  const eligible = room.round.eligiblePlayerIds || room.players.map((player) => String(player.id));
+  room.round.botClaimAt = room.players.some((player) => player.bot && eligible.indexOf(String(player.id)) >= 0)
+    ? room.round.revealAt + 2400 + Math.floor(Math.random() * 2400)
+    : 0;
+  return true;
+}
+
+function roundReady_(request, payload) {
+  const profile = requireProfile_(request);
+  const room = getRoom_(payload.code);
+  if (room.status !== 'active' || !room.round || String(room.round.id) !== String(payload.roundId || '')) {
+    return { result: 'changed', room: publicRoom_(room) };
+  }
+  if (!room.players.some((player) => String(player.id) === String(profile.id))) throw new Error('Você não está nesta sala.');
+  room.round.readyPlayerIds = Array.isArray(room.round.readyPlayerIds) ? room.round.readyPlayerIds.map(String) : [];
+  let changed = false;
+  if (room.round.readyPlayerIds.indexOf(String(profile.id)) < 0) {
+    room.round.readyPlayerIds.push(String(profile.id));
+    changed = true;
+  }
+  const ready = new Set(room.round.readyPlayerIds);
+  const everyoneReady = requiredRoundReadyIds_(room).every((playerId) => ready.has(playerId));
+  if (everyoneReady) changed = beginRoundCountdown_(room) || changed;
+  if (changed) saveRoom_(room);
+  return { result: Number(room.round.revealAt || 0) > 0 ? 'countdown' : 'waiting', room: publicRoom_(room) };
 }
 
 function projectiveDeck_() {
@@ -754,7 +799,7 @@ function claim_(request, payload) {
     return { result: 'late', winnerName: winner ? winner.name : '', room: publicRoom_(room) };
   }
   if (Array.isArray(room.round.eligiblePlayerIds) && room.round.eligiblePlayerIds.indexOf(String(player.id)) < 0) return { result: 'late', room: publicRoom_(room) };
-  if (Number(room.round.revealAt || 0) > Date.now()) return { result: 'notReady', room: publicRoom_(room) };
+  if (Number(room.round.revealAt || 0) <= 0 || Number(room.round.revealAt || 0) > Date.now()) return { result: 'notReady', room: publicRoom_(room) };
 
   let observed = room.round.observedCardIds && room.round.observedCardIds[player.id] !== undefined
     ? room.round.observedCardIds[player.id]
@@ -831,6 +876,10 @@ function applyWin_(room, player) {
 
 function maybeAdvanceRoom_(room) {
   if (room.status !== 'active' || !room.round) return room;
+  if (!room.round.locked && Number(room.round.revealAt || 0) <= 0 && Number(room.round.readyDeadlineAt || 0) <= Date.now()) {
+    if (beginRoundCountdown_(room)) saveRoom_(room);
+    return room;
+  }
   if (!room.round.locked && Number(room.round.revealAt || 0) <= Date.now() && Number(room.round.botClaimAt || 0) > 0 && Number(room.round.botClaimAt) <= Date.now()) {
     const eligibleIds = room.round.eligiblePlayerIds || room.players.map((player) => String(player.id));
     const bots = room.players.filter((player) => player.bot && eligibleIds.indexOf(String(player.id)) >= 0 && room.round.playerCardIds[player.id] !== undefined);
@@ -954,6 +1003,7 @@ function roomNeedsAdvance_(room) {
   if (!room || room.status !== 'active' || !room.round) return false;
   const timestamp = Date.now();
   if (room.round.locked) return Number(room.round.nextAt || 0) <= timestamp;
+  if (Number(room.round.revealAt || 0) <= 0) return Number(room.round.readyDeadlineAt || 0) <= timestamp;
   return Number(room.round.revealAt || 0) <= timestamp && Number(room.round.botClaimAt || 0) > 0 && Number(room.round.botClaimAt || 0) <= timestamp;
 }
 
