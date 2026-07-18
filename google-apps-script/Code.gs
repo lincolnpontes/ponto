@@ -268,7 +268,9 @@ function createRoom_(request, payload) {
   const profile = requireProfile_(request);
   const mode = MODE_LIMITS[payload.mode] ? String(payload.mode) : 'tower';
   const maxPlayers = Math.max(2, Math.min(Number(payload.maxPlayers || 4), MODE_LIMITS[mode]));
-  const roundsTotal = Math.max(5, Math.min(Number(payload.roundsTotal || 12), 30));
+  const allowedRounds = [8, 16, 32, 55];
+  const requestedRounds = Number(payload.roundsTotal || 16);
+  const roundsTotal = allowedRounds.indexOf(requestedRounds) >= 0 ? requestedRounds : 16;
   const password = String(payload.password || '');
   if (password && !/^\d{3,8}$/.test(password)) throw new Error('A senha da sala deve ter de 3 a 8 números.');
   const code = uniqueRoomCode_();

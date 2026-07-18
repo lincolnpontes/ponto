@@ -1,4 +1,4 @@
-const CACHE = "ponto-v3";
+const CACHE = "ponto-v4";
 const CORE = [
   "./", "index.html", "style.css", "config.js", "app.js", "manifest.json",
   "icon-192.png", "icon-512.png", "themes/letters-numbers/theme.json"
