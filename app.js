@@ -5,8 +5,11 @@
   const ACTIVE_POLL_MS = 250;
   const LOBBY_POLL_MS = 500;
   const PENALTY_MS = 3000;
-  const ASSET_VERSION = "11";
-  const THEME_ROOT = "themes/letters-numbers";
+  const ASSET_VERSION = "15";
+  const THEMES = Object.freeze({
+    "letters-numbers": { name: "Maiúsculas & números", root: "themes/letters-numbers" },
+    "rescue-heroes": { name: "Heróis do Resgate", root: "themes/rescue-heroes" },
+  });
   const SYNC_URL = String(window.PONTO_CONFIG?.appsScriptUrl || "https://script.google.com/macros/s/AKfycbxMNe2tp1R0D0IaPxm4OemPqfO2WwIVX9ghnlU47vJw2v8mWKjoq5_Nb4InpIwXVpU/exec").trim().replace(/\/+$/, "");
   const ADMIN_PROFILE_ID = "admin_lincoln";
 
@@ -165,6 +168,7 @@
     return {
       syncUrl: SYNC_URL,
       sound: saved.sound !== false,
+      theme: THEMES[saved.theme] ? saved.theme : "letters-numbers",
       profile: {
         id: saved.profile?.id || uid("player"),
         name: saved.profile?.name || "Jogador",
@@ -184,6 +188,7 @@
   const state = loadState();
   let currentScreen = "home";
   let selectedMode = "tower";
+  let selectedTheme = state.theme;
   let rankingTab = "wins";
   let roomTab = "create";
   let room = null;
@@ -193,6 +198,7 @@
   let penaltyTimer = 0;
   let feedbackTimer = 0;
   let toastTimer = 0;
+  let activityTimer = 0;
   let claimPending = false;
   let lastRenderedRound = "";
   let currentStreak = 0;
@@ -208,9 +214,11 @@
   let rankingRequestId = 0;
   let serverClockOffset = 0;
   const serverClockSamples = [];
-  let symbolsLoaded = false;
+  const themePreloads = new Map();
   let roundRevealTimer = 0;
   let roundRevealReadyId = "";
+  let roundReadySentId = "";
+  let lastWinnerNoticeId = "";
   let selectedTargetId = "";
   let lastAnimatedMoveId = "";
   let pendingRegistration = null;
@@ -244,24 +252,41 @@
     sessionStorage.setItem(`ponto_profile_unlocked_${state.profile.id}`, "1");
   }
 
-  function symbolPath(symbolId) {
-    return `${THEME_ROOT}/symbols/${String(symbolId).padStart(2, "0")}.png?v=${ASSET_VERSION}`;
+  function normalizeThemeId(themeId) {
+    return THEMES[themeId] ? themeId : "letters-numbers";
   }
 
-  const symbolPreloadPromise = Promise.all(Array.from({ length: 57 }, (_, symbolId) => new Promise((resolve) => {
-    const image = new Image();
-    image.onload = async () => {
-      try { if (image.decode) await image.decode(); } catch (_) { /* A imagem já pode ser exibida. */ }
-      resolve();
-    };
-    image.onerror = resolve;
-    image.src = symbolPath(symbolId);
-  }))).then(() => { symbolsLoaded = true; });
+  function activeThemeId() {
+    const roomTheme = room && ["lobby", "active"].includes(room.status) ? room.theme : "";
+    return normalizeThemeId(roomTheme || selectedTheme || state.theme);
+  }
+
+  function symbolPath(symbolId, themeId = activeThemeId()) {
+    return `${THEMES[normalizeThemeId(themeId)].root}/symbols/${String(symbolId).padStart(2, "0")}.png?v=${ASSET_VERSION}`;
+  }
+
+  function preloadTheme(themeId = activeThemeId()) {
+    const normalized = normalizeThemeId(themeId);
+    if (themePreloads.has(normalized)) return themePreloads.get(normalized);
+    const preload = { loaded: false, promise: null };
+    preload.promise = Promise.all(Array.from({ length: 57 }, (_, symbolId) => new Promise((resolve) => {
+      const image = new Image();
+      image.onload = async () => {
+        try { if (image.decode) await image.decode(); } catch (_) { /* A imagem já pode ser exibida. */ }
+        resolve();
+      };
+      image.onerror = resolve;
+      image.src = symbolPath(symbolId, normalized);
+    }))).then(() => { preload.loaded = true; });
+    themePreloads.set(normalized, preload);
+    return preload;
+  }
 
   function renderCard(element, cardId, _roundKey, options = {}) {
     if (!element) return;
     const card = FULL_DECK[Number(cardId)] || FULL_DECK[0];
-    const layoutKey = `immutable-card-${cardId}`;
+    const themeId = activeThemeId();
+    const layoutKey = `${themeId}:immutable-card-${cardId}`;
     if (element.dataset.layoutKey === layoutKey && element.querySelectorAll(".symbol").length === 8) return;
     const random = randomFrom(hashSeed(`${layoutKey}:layout`));
     const symbols = shuffled(card, hashSeed(`${layoutKey}:symbols`));
@@ -275,13 +300,13 @@
       node.className = "symbol";
       if (options.interactive) node.type = "button";
       node.dataset.symbolId = String(symbolId);
-      node.setAttribute("aria-label", `Símbolo ${SYMBOL_LABELS[symbolId]}${symbolId >= 36 ? ", segunda forma" : ""}`);
+      node.setAttribute("aria-label", themeId === "letters-numbers" ? `Símbolo ${SYMBOL_LABELS[symbolId]}${symbolId >= 36 ? ", segunda forma" : ""}` : `Símbolo ${symbolId + 1} do tema Heróis do Resgate`);
       node.style.left = `${left + (random() - .5) * 3}%`;
       node.style.top = `${top + (random() - .5) * 3}%`;
       node.style.setProperty("--size", `${Math.max(11, size + (random() - .5) * 8).toFixed(1)}%`);
       node.style.setProperty("--rotation", `${Math.round(random() * 150 - 75)}deg`);
       node.style.setProperty("--scale", String((.78 + random() * .50).toFixed(2)));
-      node.innerHTML = `<img src="${symbolPath(symbolId)}" alt="" draggable="false">`;
+      node.innerHTML = `<img src="${symbolPath(symbolId, themeId)}" alt="" draggable="false">`;
       element.appendChild(node);
     });
 
@@ -293,6 +318,14 @@
   function renderHeroCards() {
     renderCard($("#heroCardBack"), 23, "hero-back", { variant: "back" });
     renderCard($("#heroCardFront"), 8, "hero-front", { variant: "front" });
+  }
+
+  function renderThemePicker() {
+    $$('[data-theme-id]').forEach((button) => {
+      const selected = button.dataset.themeId === selectedTheme;
+      button.classList.toggle("is-selected", selected);
+      button.setAttribute("aria-pressed", String(selected));
+    });
   }
 
   function renderModeCards() {
@@ -455,11 +488,29 @@
     const currentUpdatedAt = Number(room?.updatedAt || 0);
     const incomingUpdatedAt = Number(incoming.updatedAt || 0);
     if (!force && sameRoom && (incomingRevision < currentRevision || (incomingRevision === currentRevision && incomingUpdatedAt < currentUpdatedAt))) return false;
-    room = { ...incoming, transport: "remote" };
+    room = { ...incoming, theme: normalizeThemeId(incoming.theme), transport: "remote" };
+    selectedTheme = room.theme;
+    state.theme = room.theme;
+    saveState();
+    preloadTheme(room.theme);
+    notifyRemoteRoundWinner(room);
     return true;
   }
 
+  function notifyRemoteRoundWinner(incoming) {
+    const round = incoming?.round;
+    if (currentScreen !== "game" || !round?.locked || !round.claimedBy || String(round.claimedBy) === String(state.profile.id)) return;
+    const noticeId = `${round.id}:${round.claimedBy}`;
+    if (noticeId === lastWinnerNoticeId) return;
+    lastWinnerNoticeId = noticeId;
+    const winner = incoming.players?.find((player) => String(player.id) === String(round.claimedBy));
+    showActivityResult(winner?.name ? `${winner.name.toUpperCase()} FOI PRIMEIRO` : "OUTRA PESSOA FOI PRIMEIRO", "A próxima rodada começará em instantes.", "late");
+    scheduleHideActivity(1100);
+    playTone("late");
+  }
+
   function showActivity(title = "Entrando na sala…", detail = "Sincronizando jogadores e partida.") {
+    clearTimeout(activityTimer);
     $("#activityTitle").textContent = title;
     $("#activityDetail").textContent = detail;
     $("#activityOverlay").classList.remove("is-success", "is-late", "is-error");
@@ -467,14 +518,22 @@
   }
 
   function showActivityResult(title, detail, status = "success") {
+    clearTimeout(activityTimer);
     $("#activityTitle").textContent = title;
     $("#activityDetail").textContent = detail;
     $("#activityOverlay").classList.remove("is-success", "is-late", "is-error");
     $("#activityOverlay").classList.add(`is-${status}`);
+    $("#activityOverlay").hidden = false;
   }
 
   function hideActivity() {
+    clearTimeout(activityTimer);
     $("#activityOverlay").hidden = true;
+  }
+
+  function scheduleHideActivity(delay) {
+    clearTimeout(activityTimer);
+    activityTimer = setTimeout(hideActivity, delay);
   }
 
   function applyAuthenticatedProfile(result, pin) {
@@ -562,7 +621,7 @@
     return Number(preset);
   }
 
-  function createDemoRoom(modeId, maxPlayers, roundsPreset, botCount = 0, password = "") {
+  function createDemoRoom(modeId, maxPlayers, roundsPreset, botCount = 0, password = "", themeId = selectedTheme) {
     const players = buildDemoPlayers(Math.min(maxPlayers, modeById(modeId).maxPlayers), botCount);
     const normalizedPreset = normalizeRoundsPreset(roundsPreset);
     return {
@@ -573,7 +632,7 @@
       maxPlayers,
       roundsPreset: normalizedPreset,
       roundsTotal: resolveRoundsTotal(modeId, normalizedPreset, players.length),
-      theme: "letters-numbers",
+      theme: normalizeThemeId(themeId),
       hasPassword: Boolean(password),
       password,
       status: "lobby",
@@ -591,8 +650,13 @@
     saveState();
   }
 
-  async function createRoom({ modeId, maxPlayers, roundsPreset, quick = false, botCount = 0, password = "" }) {
+  async function createRoom({ modeId, maxPlayers, roundsPreset, quick = false, botCount = 0, password = "", themeId = selectedTheme }) {
     selectedMode = modeId;
+    themeId = normalizeThemeId(themeId);
+    selectedTheme = themeId;
+    state.theme = themeId;
+    saveState();
+    preloadTheme(themeId);
     if (!quick && room && room.hostId === state.profile.id && ["lobby", "active"].includes(room.status)) {
       showScreen(room.status === "active" ? "game" : "lobby");
       toast("Você já tem uma sala aberta.");
@@ -601,7 +665,7 @@
     if (!quick && createPending) return toast("Sua sala já está sendo criada.");
 
     if (quick) {
-      room = createDemoRoom(modeId, maxPlayers, roundsPreset, botCount, password);
+      room = createDemoRoom(modeId, maxPlayers, roundsPreset, botCount, password, themeId);
       addRecentRoom(room);
       renderLobby();
       showScreen("lobby");
@@ -614,7 +678,7 @@
     const requestedCode = makeRoomCode();
     activeCreateId = createId;
     createPending = true;
-    room = createDemoRoom(modeId, maxPlayers, roundsPreset, botCount, password);
+    room = createDemoRoom(modeId, maxPlayers, roundsPreset, botCount, password, themeId);
     room.code = requestedCode;
     room.transport = "remote-pending";
     room.pendingCreateId = createId;
@@ -624,7 +688,7 @@
 
     try {
       await ensureRemoteProfile();
-      const result = await api("createRoom", { mode: modeId, maxPlayers, roundsPreset: normalizeRoundsPreset(roundsPreset), theme: "letters-numbers", botCount, password, requestedCode });
+      const result = await api("createRoom", { mode: modeId, maxPlayers, roundsPreset: normalizeRoundsPreset(roundsPreset), theme: themeId, botCount, password, requestedCode });
       if (activeCreateId !== createId) {
         api("closeRoom", { code: result.room.code }, { timeout: 7000 }).catch(() => {});
         return;
@@ -1071,7 +1135,10 @@
     const mode = modeById(room.mode);
     const roundChanged = lastRenderedRound !== room.round.id;
     const cardTransfer = roundChanged ? captureCardTransfer(room.lastMove) : null;
-    if (roundChanged) selectedTargetId = "";
+    if (roundChanged) {
+      selectedTargetId = "";
+      roundReadySentId = "";
+    }
     const selectedTarget = selectedTargetForRoom();
     $("#gameModeTitle").textContent = mode.title;
     $("#gameRoomCode").textContent = room.code;
@@ -1122,6 +1189,7 @@
     const overlay = $("#roundReadyOverlay");
     const count = $("#roundReadyCount");
     if (!roundId) return;
+    const themePreload = preloadTheme(activeThemeId());
     let roundImagesLoaded = false;
     $("span", overlay).textContent = room.round.isTiebreak ? "RODADA DE DESEMPATE" : "TODO MUNDO PRONTO?";
     const roundImagePromise = Promise.all($$(".game-card img").map((image) => new Promise((resolve) => {
@@ -1134,7 +1202,10 @@
         image.addEventListener("load", finish, { once: true });
         image.addEventListener("error", resolve, { once: true });
       }
-    }))).then(() => { roundImagesLoaded = true; });
+    }))).then(() => {
+      roundImagesLoaded = true;
+      if (room?.transport === "remote") confirmRemoteRoundReady(roundId);
+    });
     overlay.hidden = false;
     $("#observedCard").classList.add("is-concealed");
     $("#playerCard").classList.add("is-concealed");
@@ -1145,10 +1216,16 @@
         clearInterval(roundRevealTimer);
         return;
       }
-      const remaining = Number(room.round.revealAt || 0) - serverNow();
-      const assetsReady = symbolsLoaded && roundImagesLoaded;
-      count.textContent = !assetsReady ? "…" : remaining > 0 ? String(Math.max(1, Math.ceil(remaining / 1000))) : "VAI!";
-      if (remaining <= 0 && assetsReady) {
+      const revealAt = Number(room.round.revealAt || 0);
+      const remaining = revealAt > 0 ? revealAt - serverNow() : Number.POSITIVE_INFINITY;
+      const assetsReady = themePreload.loaded && roundImagesLoaded;
+      $("span", overlay).textContent = !assetsReady
+        ? "CARREGANDO AS CARTAS"
+        : revealAt <= 0
+          ? "AGUARDANDO TODOS OS CELULARES"
+          : room.round.isTiebreak ? "RODADA DE DESEMPATE" : "TODO MUNDO PRONTO?";
+      count.textContent = !assetsReady || revealAt <= 0 ? "…" : remaining > 0 ? String(Math.max(1, Math.ceil(remaining / 1000))) : "VAI!";
+      if (revealAt > 0 && remaining <= 0 && assetsReady) {
         clearInterval(roundRevealTimer);
         roundRevealReadyId = roundId;
         $("#observedCard").classList.remove("is-concealed");
@@ -1160,7 +1237,20 @@
     };
     update();
     roundRevealTimer = setInterval(update, 80);
-    Promise.all([symbolPreloadPromise, roundImagePromise]).then(update);
+    Promise.all([themePreload.promise, roundImagePromise]).then(update);
+  }
+
+  async function confirmRemoteRoundReady(roundId) {
+    if (!roundId || roundReadySentId === roundId || room?.transport !== "remote") return;
+    roundReadySentId = roundId;
+    try {
+      const result = await api("roundReady", { code: room.code, roundId }, { timeout: 8000, silent: true });
+      if (room?.round?.id === roundId && result.room) acceptRemoteRoom(result.room, true);
+    } catch (_) {
+      if (room?.round?.id !== roundId) return;
+      roundReadySentId = "";
+      setTimeout(() => confirmRemoteRoundReady(roundId), 700);
+    }
   }
 
   function setCardButtonsDisabled(disabled) {
@@ -1243,7 +1333,7 @@
           claimPending = false;
           currentStreak = 0;
           showActivityResult("ERROU!", "Você ficará 3 segundos sem tocar.", "error");
-          setTimeout(hideActivity, 850);
+          scheduleHideActivity(850);
           playTone("wrong");
           renderGame();
           updatePenaltyCover();
@@ -1253,13 +1343,13 @@
           state.profile.bestStreak = Math.max(state.profile.bestStreak, currentStreak);
           saveState();
           showActivityResult(room.mode === "potato" && !room.round?.isTiebreak ? "VOCÊ PASSOU AS CARTAS!" : "VOCÊ FOI PRIMEIRO!", "Jogada confirmada pelo servidor.", "success");
-          setTimeout(hideActivity, 900);
+          scheduleHideActivity(900);
           playTone("win");
           vibrate([35, 35, 70]);
         } else {
           currentStreak = 0;
           showActivityResult(result.winnerName ? `${result.winnerName.toUpperCase()} FOI PRIMEIRO` : "RODADA ENCERRADA", "A próxima rodada começará em instantes.", "late");
-          setTimeout(hideActivity, 900);
+          scheduleHideActivity(900);
           playTone("late");
         }
         renderGame();
@@ -1607,6 +1697,45 @@
     updateSyncPill("online");
   }
 
+  function isInstalledApp() {
+    return window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  }
+
+  function updateInstallButtonVisibility() {
+    $("#installAppBtn").hidden = isInstalledApp();
+  }
+
+  async function updateApplication() {
+    showActivity("Atualizando…", "Buscando a versão mais recente do PONTO!.");
+    try {
+      if ("serviceWorker" in navigator) {
+        const registration = await navigator.serviceWorker.getRegistration();
+        if (registration) await registration.update();
+      }
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.filter((key) => key.startsWith("ponto-")).map((key) => caches.delete(key)));
+      }
+      showActivityResult("ATUALIZAÇÃO PRONTA!", "Reabrindo o aplicativo.", "success");
+      setTimeout(() => location.reload(), 450);
+    } catch (error) {
+      showActivityResult("NÃO FOI POSSÍVEL ATUALIZAR", error.message, "error");
+      scheduleHideActivity(1500);
+    }
+  }
+
+  function preventPullToRefresh() {
+    let pullStartY = null;
+    document.addEventListener("touchstart", (event) => {
+      pullStartY = window.scrollY <= 0 ? Number(event.touches?.[0]?.clientY || 0) : null;
+    }, { passive: true });
+    document.addEventListener("touchmove", (event) => {
+      const currentY = Number(event.touches?.[0]?.clientY || 0);
+      if (pullStartY !== null && window.scrollY <= 0 && currentY > pullStartY) event.preventDefault();
+    }, { passive: false });
+    document.addEventListener("touchend", () => { pullStartY = null; }, { passive: true });
+  }
+
   async function showAdminPlayers() {
     $("#adminListTitle").textContent = "Jogadores";
     $("#adminListNote").textContent = "Gerencie cadastros e senhas temporárias.";
@@ -1697,6 +1826,15 @@
         $$("#maxPlayersInput option").forEach((option) => { option.disabled = Number(option.value) > max; });
         if (Number($("#maxPlayersInput").value) > max) $("#maxPlayersInput").value = String(max);
       }
+      const themeOption = event.target.closest("[data-theme-id]");
+      if (themeOption) {
+        selectedTheme = normalizeThemeId(themeOption.dataset.themeId);
+        state.theme = selectedTheme;
+        saveState();
+        renderThemePicker();
+        preloadTheme(selectedTheme);
+        renderHeroCards();
+      }
       const avatar = event.target.closest("[data-avatar]");
       if (avatar) {
         state.profile.avatar = avatar.dataset.avatar;
@@ -1778,6 +1916,7 @@
     $("#addTrainingPlayerBtn").addEventListener("click", addTrainingPlayer);
     $("#closeRoomBtn").addEventListener("click", closeCurrentRoom);
     $("#refreshRoomsBtn").addEventListener("click", refreshOpenRooms);
+    $("#updateAppBtn").addEventListener("click", updateApplication);
     $("#leaveGameBtn").addEventListener("click", leaveCurrentRoom);
     $("#soundBtn").addEventListener("click", () => { state.sound = !state.sound; saveState(); renderGame(); });
     $("#listPlayersBtn").addEventListener("click", showAdminPlayers);
@@ -1944,14 +2083,14 @@
 
     $("#playAgainBtn").addEventListener("click", () => {
       $("#resultDialog").close();
-      createRoom({ modeId: room?.mode || "tower", maxPlayers: room?.maxPlayers || 4, roundsPreset: room?.roundsPreset || "8", quick: true, botCount: room?.players?.filter((player) => player.bot).length || 0 });
+      createRoom({ modeId: room?.mode || "tower", maxPlayers: room?.maxPlayers || 4, roundsPreset: room?.roundsPreset || "8", quick: true, botCount: room?.players?.filter((player) => player.bot).length || 0, themeId: room?.theme || selectedTheme });
     });
     $("#closeResultBtn").addEventListener("click", () => { $("#resultDialog").close(); showScreen("home"); });
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && room?.transport === "remote") startPolling(); });
     window.addEventListener("beforeinstallprompt", (event) => {
       event.preventDefault();
       deferredInstallPrompt = event;
-      $("#installAppBtn").classList.add("is-ready");
+      if (!isInstalledApp()) $("#installAppBtn").classList.add("is-ready");
     });
     window.addEventListener("appinstalled", () => {
       deferredInstallPrompt = null;
@@ -1959,10 +2098,7 @@
       toast("PONTO! instalado.", "good");
     });
     $("#installAppBtn").addEventListener("click", async () => {
-      if (window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true) {
-        toast("O PONTO! já está instalado.", "good");
-        return;
-      }
+      if (isInstalledApp()) return updateInstallButtonVisibility();
       if (!deferredInstallPrompt) {
         toast("No iPhone, use Compartilhar → Adicionar à Tela de Início.");
         return;
@@ -1972,29 +2108,30 @@
       if (choice.outcome === "accepted") $("#installAppBtn").hidden = true;
       deferredInstallPrompt = null;
     });
+    const displayMode = window.matchMedia("(display-mode: standalone)");
+    if (displayMode.addEventListener) displayMode.addEventListener("change", updateInstallButtonVisibility);
   }
 
   function init() {
     renderHeroCards();
     renderModeCards();
+    renderThemePicker();
+    preloadTheme(selectedTheme);
     renderProfile();
     renderSyncStatus();
     bindEvents();
+    preventPullToRefresh();
+    updateInstallButtonVisibility();
     setRoomTab("join");
     showScreen("home");
-    openAuthDialog();
+    const activeSession = Boolean(state.profile.token && sessionPin() && sessionStorage.getItem(`ponto_profile_unlocked_${state.profile.id}`) === "1");
+    if (!activeSession) openAuthDialog();
     api("status", {}, { timeout: 10000 })
-      .then((status) => { if (Number(status.version || 0) < 6) updateSyncPill("busy", "Atualize o Code.gs"); })
+      .then((status) => { if (Number(status.version || 0) < 8) updateSyncPill("busy", "Atualize o Code.gs"); })
       .catch(() => updateSyncPill("demo", "Reconectando…"));
     if (!validateDeck()) console.error("Falha na validação matemática do baralho.");
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      let refreshing = false;
-      navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (refreshing) return;
-        refreshing = true;
-        location.reload();
-      });
-      navigator.serviceWorker.register(`service-worker.js?v=${ASSET_VERSION}`).then((registration) => registration.update()).catch(() => {});
+      navigator.serviceWorker.register(`service-worker.js?v=${ASSET_VERSION}`).catch(() => {});
     }
   }
 

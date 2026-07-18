@@ -6,14 +6,14 @@ Jogo multiplayer inspirado na lógica matemática do Dobble, feito como PWA est�
 
 - Baralho de 57 cartas, 8 símbolos por carta e exatamente 1 símbolo em comum entre quaisquer duas cartas.
 - Construção matemática completa de 57 cartas e 57 símbolos, sem descartar nenhuma carta.
-- Tema `Maiúsculas & números` com 57 PNGs próprios em `themes/letters-numbers/`; não há letras minúsculas.
+- Dois temas selecionáveis por sala: `Maiúsculas & números` e `Heróis do Resgate`, ambos com 57 PNGs próprios em pastas isoladas.
 - Layout vertical: carta observada em cima, carta do jogador embaixo.
 - Toque no símbolo correto e punição de 3 segundos após um erro.
 - Erros aparecem imediatamente no celular; acertos mostram uma tela curta de confirmação até o servidor decidir quem foi primeiro.
 - Salas simultâneas com código, lista de salas abertas e senha opcional de exatamente 4 números.
 - Cada perfil pode hospedar somente uma sala aberta; o anfitrião pode encerrá-la a qualquer momento.
 - Inclusão e remoção de vários jogadores de treino aparecem imediatamente e entram em uma fila curta de confirmação ao fundo; não é preciso esperar entre os toques.
-- Contagem regressiva por horário do servidor: todos os aparelhos revelam a rodada no mesmo instante, depois que as 16 imagens estão carregadas.
+- Cada celular confirma ao servidor que carregou as cartas; só então começa a mesma contagem regressiva para todos e as cartas são reveladas juntas.
 - Progressão fiel dos quatro modos: cartas ganhas ou descartadas permanecem no topo correto, e Batata Quente transfere a mão inteira.
 - Cada carta tem uma disposição visual imutável: posição, tamanho e rotação acompanham a própria carta quando ela muda de lugar ou permanece entre rodadas.
 - Transferências entre a carta central e a pilha do jogador têm animação física de movimento.
@@ -26,7 +26,8 @@ Jogo multiplayer inspirado na lógica matemática do Dobble, feito como PWA est�
 - Modo demonstração local com adversários de treino.
 - Backend Google Apps Script + Sheets com estado ativo em cache compartilhado, persistência no Sheets e bloqueio atômico somente para decidir jogadas.
 - PWA instalável e cache dos arquivos para abertura rápida.
-- Botão de instalação ao lado do indicador de sincronização.
+- Botão de instalação ao lado do indicador de sincronização, oculto quando o PWA já está aberto como aplicativo.
+- Atualização manual pelo Perfil, sem recarregamento por gesto de puxar a tela para baixo.
 
 ## Estrutura compacta
 
@@ -38,6 +39,7 @@ config.js                         URL padrão do Google Apps Script
 manifest.json                     instalação PWA
 service-worker.js                 cache offline
 themes/letters-numbers/           tema isolado e seus 57 símbolos
+themes/rescue-heroes/             tema infantil de fã e seus 57 símbolos
 google-apps-script/Code.gs        backend multiplayer
 scripts/generate_theme.py         gerador determinístico dos PNGs
 ```
