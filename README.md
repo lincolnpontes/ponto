@@ -10,7 +10,7 @@ Jogo multiplayer inspirado na lógica matemática do Dobble, feito como PWA est�
 - Layout vertical: carta observada em cima, carta do jogador embaixo.
 - Toque no símbolo correto e punição de 3 segundos após um erro.
 - Erros aparecem imediatamente no celular; acertos mostram uma tela curta de confirmação até o servidor decidir quem foi primeiro.
-- Salas simultâneas com código, lista de salas abertas e senha opcional de 3 a 8 números.
+- Salas simultâneas com código, lista de salas abertas e senha opcional de exatamente 4 números.
 - Cada perfil pode hospedar somente uma sala aberta; o anfitrião pode encerrá-la a qualquer momento.
 - Inclusão e remoção de vários jogadores de treino aparecem imediatamente e entram em uma fila curta de confirmação ao fundo; não é preciso esperar entre os toques.
 - Contagem regressiva por horário do servidor: todos os aparelhos revelam a rodada no mesmo instante, depois que as 16 imagens estão carregadas.

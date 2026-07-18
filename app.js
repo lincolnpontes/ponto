@@ -5,7 +5,7 @@
   const ACTIVE_POLL_MS = 250;
   const LOBBY_POLL_MS = 500;
   const PENALTY_MS = 3000;
-  const ASSET_VERSION = "10";
+  const ASSET_VERSION = "11";
   const THEME_ROOT = "themes/letters-numbers";
   const SYNC_URL = String(window.PONTO_CONFIG?.appsScriptUrl || "https://script.google.com/macros/s/AKfycbxMNe2tp1R0D0IaPxm4OemPqfO2WwIVX9ghnlU47vJw2v8mWKjoq5_Nb4InpIwXVpU/exec").trim().replace(/\/+$/, "");
   const ADMIN_PROFILE_ID = "admin_lincoln";
@@ -1756,7 +1756,7 @@
     $("#createRoomForm").addEventListener("submit", (event) => {
       event.preventDefault();
       const password = $("#roomPasswordCreate").value.trim();
-      if (password && !/^\d{3,8}$/.test(password)) return toast("A senha da sala deve ter de 3 a 8 números.", "error");
+      if (password && !/^\d{4}$/.test(password)) return toast("A senha da sala deve ter exatamente 4 números.", "error");
       const maxPlayers = Number($("#maxPlayersInput").value);
       createRoom({ modeId: selectedMode, maxPlayers, roundsPreset: $("#roundsInput").value, botCount: 0, password });
     });

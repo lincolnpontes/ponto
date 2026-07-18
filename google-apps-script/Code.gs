@@ -398,7 +398,7 @@ function createRoom_(request, payload) {
   const roundsPreset = ['8', '16', '32', '55'].indexOf(String(payload.roundsPreset || '16')) >= 0 ? String(payload.roundsPreset || '16') : '16';
   const roundsTotal = Number(roundsPreset);
   const password = String(payload.password || '');
-  if (password && !/^\d{3,8}$/.test(password)) throw new Error('A senha da sala deve ter de 3 a 8 números.');
+  if (password && !/^\d{4}$/.test(password)) throw new Error('A senha da sala deve ter exatamente 4 números.');
   const code = uniqueRoomCode_(payload.requestedCode);
   const room = {
     code, hostId: String(profile.id), mode, maxPlayers, roundsPreset, roundsTotal,
