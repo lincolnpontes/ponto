@@ -5,6 +5,7 @@
   const ACTIVE_POLL_MS = 250;
   const LOBBY_POLL_MS = 650;
   const PENALTY_MS = 3000;
+  const ASSET_VERSION = "8";
   const THEME_ROOT = "themes/letters-numbers";
   const SYNC_URL = String(window.PONTO_CONFIG?.appsScriptUrl || "https://script.google.com/macros/s/AKfycbxMNe2tp1R0D0IaPxm4OemPqfO2WwIVX9ghnlU47vJw2v8mWKjoq5_Nb4InpIwXVpU/exec").trim().replace(/\/+$/, "");
   const ADMIN_PROFILE_ID = "admin_lincoln";
@@ -240,7 +241,7 @@
   }
 
   function symbolPath(symbolId) {
-    return `${THEME_ROOT}/symbols/${String(symbolId).padStart(2, "0")}.png`;
+    return `${THEME_ROOT}/symbols/${String(symbolId).padStart(2, "0")}.png?v=${ASSET_VERSION}`;
   }
 
   const symbolPreloadPromise = Promise.all(Array.from({ length: 57 }, (_, symbolId) => new Promise((resolve) => {
@@ -1630,7 +1631,7 @@
         refreshing = true;
         location.reload();
       });
-      navigator.serviceWorker.register("service-worker.js").then((registration) => registration.update()).catch(() => {});
+      navigator.serviceWorker.register(`service-worker.js?v=${ASSET_VERSION}`).then((registration) => registration.update()).catch(() => {});
     }
   }
 
