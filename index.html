@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+  <meta name="theme-color" content="#ff5c45">
+  <meta name="description" content="PONTO! — encontre o único símbolo em comum antes de todo mundo.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="PONTO! — duas cartas, um símbolo, vai!">
+  <meta property="og:description" content="Jogo de símbolos multiplayer para vários celulares, com salas e ranking.">
+  <meta property="og:image" content="og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>PONTO! — jogo de símbolos</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+
+  <div class="app-shell">
+    <header class="topbar" id="topbar">
+      <button class="brand" data-go="home" aria-label="Ir para o início">
+        <span class="brand-dot"></span><span>PONTO!</span>
+      </button>
+      <button class="sync-pill" id="syncPill" data-go="settings" aria-label="Abrir sincronização">
+        <span class="sync-light"></span>
+        <span id="syncPillText">Modo demonstração</span>
+      </button>
+    </header>
+
+    <main id="appMain">
+      <section class="screen is-active" data-screen="home" aria-labelledby="homeTitle">
+        <div class="hero-copy">
+          <p class="eyebrow">RÁPIDO • JUSTO • EM TEMPO REAL</p>
+          <h1 id="homeTitle">Duas cartas.<br><span>Um símbolo.</span><br>Vai!</h1>
+          <p class="hero-lede">Ache a única combinação antes dos seus amigos. Um toque decide a rodada.</p>
+        </div>
+
+        <div class="hero-stage" aria-label="Exemplo de carta do jogo">
+          <div class="burst burst-coral">57<br><small>símbolos</small></div>
+          <div class="burst burst-blue">1<br><small>igual</small></div>
+          <div class="mini-card mini-card-back" id="heroCardBack"></div>
+          <div class="mini-card" id="heroCardFront"></div>
+        </div>
+
+        <div class="home-actions">
+          <button class="button button-primary button-big" id="quickPlayBtn">
+            <span>Treinar agora</span><span aria-hidden="true">→</span>
+          </button>
+          <div class="button-row">
+            <button class="button button-dark" data-go="rooms" data-room-action="create">Criar sala</button>
+            <button class="button button-paper" data-go="rooms" data-room-action="join">Entrar com código</button>
+          </div>
+        </div>
+
+        <div class="compact-proof" aria-label="Recursos principais">
+          <div><strong>0,25s</strong><span>atualização ativa</span></div>
+          <div><strong>3s</strong><span>punição por erro</span></div>
+          <div><strong>4</strong><span>modos de jogo</span></div>
+        </div>
+
+        <div class="section-heading">
+          <div><p class="eyebrow">ESCOLHA SUA BAGUNÇA</p><h2>Quatro jeitos de jogar</h2></div>
+          <button class="text-button" data-go="rules">Ver regras</button>
+        </div>
+        <div class="mode-rail" id="homeModeRail"></div>
+      </section>
+
+      <section class="screen" data-screen="rooms" aria-labelledby="roomsTitle">
+        <div class="page-heading">
+          <button class="back-button" data-go="home" aria-label="Voltar">←</button>
+          <div><p class="eyebrow">PARTIDA MULTIPLAYER</p><h1 id="roomsTitle">Sua sala, suas regras.</h1></div>
+        </div>
+
+        <div class="segmented" role="tablist" aria-label="Ação da sala">
+          <button class="is-selected" role="tab" data-room-tab="create">Criar sala</button>
+          <button role="tab" data-room-tab="join">Entrar</button>
+        </div>
+
+        <form class="room-panel is-active" id="createRoomForm" data-room-panel="create">
+          <fieldset>
+            <legend>1. Escolha o modo</legend>
+            <div class="mode-picker" id="modePicker"></div>
+          </fieldset>
+          <div class="form-grid">
+            <label class="field"><span>Jogadores</span>
+              <select id="maxPlayersInput">
+                <option value="2">2 jogadores</option>
+                <option value="3">3 jogadores</option>
+                <option value="4" selected>4 jogadores</option>
+                <option value="6">6 jogadores</option>
+                <option value="8">8 jogadores</option>
+              </select>
+            </label>
+            <label class="field"><span>Rodadas</span>
+              <select id="roundsInput">
+                <option value="8">Rápida · 8</option>
+                <option value="12" selected>Clássica · 12</option>
+                <option value="20">Longa · 20</option>
+              </select>
+            </label>
+          </div>
+          <label class="field optional-password"><span>Senha da sala <small>opcional</small></span>
+            <input id="roomPasswordCreate" type="password" inputmode="numeric" pattern="[0-9]{3,8}" maxlength="8" placeholder="3 a 8 números" autocomplete="new-password">
+          </label>
+          <label class="check-field">
+            <input id="addBotsInput" type="checkbox">
+            <span><b>Adicionar jogadores de treino</b><small>Opcional; você também poderá adicioná-los no lobby.</small></span>
+          </label>
+          <div class="theme-choice">
+            <div class="theme-swatch"><b>A</b><b>7</b><b>G</b></div>
+            <div><span class="micro-label">TEMA ATIVO</span><strong>Maiúsculas & números</strong><small>57 combinações de cor e forma</small></div>
+            <span class="checkmark">✓</span>
+          </div>
+          <button class="button button-primary button-big" type="submit">Criar sala <span>→</span></button>
+        </form>
+
+        <form class="room-panel join-panel" id="joinRoomForm" data-room-panel="join">
+          <div class="join-mark" aria-hidden="true">#</div>
+          <h2>Digite o código da sala</h2>
+          <label class="field code-field"><span>Código</span>
+            <input id="roomCodeInput" maxlength="5" inputmode="text" autocomplete="off" placeholder="P0NT0" required>
+          </label>
+          <label class="field" id="joinPasswordField"><span>Senha <small>se a sala tiver</small></span>
+            <input id="roomPasswordJoin" type="password" inputmode="numeric" pattern="[0-9]{3,8}" maxlength="8" placeholder="Senha numérica" autocomplete="current-password">
+          </label>
+          <button class="button button-primary button-big" type="submit">Entrar na sala <span>→</span></button>
+          <div class="open-rooms-block">
+            <div class="section-heading compact-heading"><div><p class="eyebrow">SALAS ABERTAS</p><h2>Entrar com um toque</h2></div><button class="text-button" type="button" id="refreshRoomsBtn">Atualizar</button></div>
+            <div class="open-room-list" id="openRoomList"><p class="empty-rooms">Conecte o Google Apps Script para ver as salas abertas.</p></div>
+          </div>
+        </form>
+      </section>
+
+      <section class="screen lobby-screen" data-screen="lobby" aria-labelledby="lobbyTitle">
+        <div class="page-heading">
+          <button class="back-button" data-go="rooms" aria-label="Sair da sala">←</button>
+          <div><p class="eyebrow">SALA DE ESPERA</p><h1 id="lobbyTitle">Todo mundo pronto?</h1></div>
+        </div>
+        <div class="room-code-card">
+          <span>CÓDIGO DA SALA</span>
+          <strong id="lobbyCode">P0NT0</strong>
+          <button class="copy-button" id="copyRoomCode">Copiar</button>
+        </div>
+        <div class="lobby-mode" id="lobbyMode"></div>
+        <div class="section-heading compact-heading">
+          <div><p class="eyebrow">JOGADORES</p><h2><span id="playerCount">1</span> conectados</h2></div>
+          <span class="live-badge"><i></i> ao vivo</span>
+        </div>
+        <div class="player-list" id="lobbyPlayers"></div>
+        <button class="button button-paper add-bot-button" id="addTrainingPlayerBtn" type="button">＋ Adicionar jogador de treino</button>
+        <button class="button button-primary button-big" id="startGameBtn">Começar partida <span>→</span></button>
+        <p class="host-hint" id="hostHint">Você é o anfitrião. A partida começa para todos ao mesmo tempo.</p>
+      </section>
+
+      <section class="screen game-screen" data-screen="game" aria-labelledby="gameModeTitle">
+        <div class="game-topline">
+          <button class="round-icon-button" id="leaveGameBtn" aria-label="Sair da partida">×</button>
+          <div class="game-room-label"><span id="gameModeTitle">Torre do caos</span><small>Sala <b id="gameRoomCode">P0NT0</b></small></div>
+          <button class="round-icon-button" id="soundBtn" aria-label="Ativar ou desativar som">♪</button>
+        </div>
+
+        <div class="score-strip" id="scoreStrip"></div>
+
+        <div class="card-zone observed-zone">
+          <div class="card-label"><span id="observedLabel">CARTA CENTRAL</span><b id="roundCounter">1 / 12</b></div>
+          <div class="game-card observed-card" id="observedCard" aria-label="Carta observada"></div>
+        </div>
+
+        <div class="match-divider" aria-hidden="true"><span></span><b>ACHE O IGUAL</b><span></span></div>
+
+        <div class="card-zone player-zone">
+          <div class="card-label"><span>SUA CARTA</span><b id="playerCardCount">+0 cartas</b></div>
+          <div class="game-card player-card" id="playerCard" aria-label="Sua carta"></div>
+        </div>
+
+        <div class="game-feedback" id="gameFeedback" role="status" aria-live="assertive"></div>
+      </section>
+
+      <section class="screen" data-screen="ranking" aria-labelledby="rankingTitle">
+        <div class="page-heading no-back">
+          <div><p class="eyebrow">PLACAR GERAL</p><h1 id="rankingTitle">Quem manda no ponto?</h1></div>
+          <div class="trophy-bubble">★</div>
+        </div>
+        <div class="segmented ranking-tabs" role="tablist" aria-label="Tipo de ranking">
+          <button class="is-selected" role="tab" data-rank-tab="wins">Mais vitórias</button>
+          <button role="tab" data-rank-tab="rate">Melhor aproveitamento</button>
+        </div>
+        <p class="ranking-note" id="rankingNote">Vitórias em partidas completas.</p>
+        <div class="podium" id="podium"></div>
+        <div class="ranking-list" id="rankingList"></div>
+      </section>
+
+      <section class="screen" data-screen="profile" aria-labelledby="profileTitle">
+        <div class="page-heading no-back">
+          <div><p class="eyebrow">SEU JOGADOR</p><h1 id="profileTitle">Perfil & estatísticas</h1></div>
+          <div class="profile-badge" id="profileBadge">L</div>
+        </div>
+        <form id="profileForm" class="profile-form">
+          <fieldset>
+            <legend>Escolha seu avatar</legend>
+            <div class="avatar-picker" id="avatarPicker"></div>
+          </fieldset>
+          <label class="field"><span>Nome de jogador</span>
+            <input id="profileNameInput" maxlength="18" autocomplete="nickname" required>
+          </label>
+          <label class="field"><span>Senha do perfil <small>3 números</small></span>
+            <input id="profilePinInput" type="password" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="•••" autocomplete="new-password" required>
+          </label>
+          <button class="button button-dark" type="submit">Salvar perfil</button>
+        </form>
+        <div class="profile-stats" id="profileStats"></div>
+        <div class="achievement-card">
+          <div class="achievement-icon">⚡</div>
+          <div><span class="micro-label">MELHOR MARCA</span><strong id="bestStreakText">4 acertos seguidos</strong><small>Continue jogando para subir no ranking.</small></div>
+        </div>
+        <button class="settings-link" data-go="settings"><span>⚙</span><div><b>Sincronização e ajustes</b><small>Google Apps Script, tema e conexão</small></div><span>→</span></button>
+      </section>
+
+      <section class="screen" data-screen="settings" aria-labelledby="settingsTitle">
+        <div class="page-heading">
+          <button class="back-button" data-go="profile" aria-label="Voltar">←</button>
+          <div><p class="eyebrow">CONFIGURAÇÃO</p><h1 id="settingsTitle">Sincronização</h1></div>
+        </div>
+        <div class="sync-status-card" id="syncStatusCard">
+          <span class="large-sync-light"></span>
+          <div><strong id="syncStatusTitle">Modo demonstração</strong><small id="syncStatusDetail">As partidas funcionam neste aparelho.</small></div>
+        </div>
+        <form id="syncForm" class="settings-form">
+          <label class="field"><span>URL do Google Apps Script</span>
+            <input id="syncUrlInput" type="url" placeholder="https://script.google.com/macros/s/.../exec">
+          </label>
+          <div class="button-row">
+            <button class="button button-dark" type="submit">Testar e salvar</button>
+            <button class="button button-paper" type="button" id="clearSyncBtn">Desconectar</button>
+          </div>
+        </form>
+        <div class="tech-card">
+          <span class="tech-number">01</span><div><strong>Toque decidido no servidor</strong><p>O Apps Script usa um bloqueio atômico: o primeiro pedido válido vence, mesmo que dois celulares acertem juntos.</p></div>
+        </div>
+        <div class="tech-card">
+          <span class="tech-number">02</span><div><strong>Atualização adaptativa</strong><p>Enquanto a sala está aberta, a próxima consulta começa 0,25 s após a resposta anterior. Fora da sala, o app reduz o ritmo para poupar a cota do Google.</p></div>
+        </div>
+        <div class="math-card">
+          <p class="eyebrow">A MATEMÁTICA DO BARALHO</p>
+          <h2>57 símbolos, 57 cartas.</h2>
+          <p>Com 8 símbolos por carta, a construção perfeita tem 57 cartas — e todas elas mantêm exatamente um símbolo em comum entre cada par.</p>
+          <div class="equation">7² + 7 + 1 = <b>57</b></div>
+        </div>
+      </section>
+
+      <section class="screen" data-screen="rules" aria-labelledby="rulesTitle">
+        <div class="page-heading">
+          <button class="back-button" data-go="home" aria-label="Voltar">←</button>
+          <div><p class="eyebrow">COMO JOGAR</p><h1 id="rulesTitle">As regras do PONTO!</h1></div>
+        </div>
+        <div class="rule-intro"><strong>Regra de ouro</strong><p>Entre quaisquer duas cartas há um — e somente um — símbolo idêntico. Tamanho e rotação podem mudar.</p></div>
+        <div class="rules-list" id="rulesList"></div>
+        <aside class="info-note warning-note"><span>✋</span><p><strong>Errou? Respira.</strong> O jogador fica 3 segundos sem poder tocar, impedindo tentativas no chute.</p></aside>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" id="bottomNav" aria-label="Navegação principal">
+      <button class="is-selected" data-go="home"><span>🏠</span><b>Início</b></button>
+      <button data-go="rooms"><span>🎮</span><b>Salas</b></button>
+      <button data-go="ranking"><span>🏆</span><b>Ranking</b></button>
+      <button data-go="profile"><span>😄</span><b>Perfil</b></button>
+    </nav>
+  </div>
+
+  <dialog class="result-dialog" id="resultDialog">
+    <div class="confetti" aria-hidden="true">✦　●　◆　✦　●</div>
+    <span class="result-kicker">PARTIDA ENCERRADA</span>
+    <div class="result-avatar" id="resultAvatar">🏆</div>
+    <h2 id="resultTitle">Você venceu!</h2>
+    <p id="resultText">Ninguém achou os símbolos mais rápido.</p>
+    <div class="result-score" id="resultScore"></div>
+    <button class="button button-primary button-big" id="playAgainBtn">Jogar de novo</button>
+    <button class="text-button" id="closeResultBtn">Voltar ao início</button>
+  </dialog>
+
+  <dialog class="pin-dialog" id="pinDialog">
+    <div class="pin-avatar" id="pinDialogAvatar">⚡</div>
+    <span class="result-kicker">PERFIL PROTEGIDO</span>
+    <h2 id="pinDialogTitle">Olá, Lincoln!</h2>
+    <p>Digite sua senha de 3 números para acessar este perfil.</p>
+    <form id="pinUnlockForm">
+      <label class="field"><span>Senha do perfil</span><input id="pinUnlockInput" type="password" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="•••" autocomplete="current-password" required></label>
+      <p class="pin-error" id="pinError" hidden>Senha incorreta.</p>
+      <button class="button button-primary button-big" type="submit"><span>Entrar</span><span>→</span></button>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="app.js" defer></script>
+</body>
+</html>
