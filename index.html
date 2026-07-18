@@ -12,10 +12,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>PONTO! — jogo de símbolos</title>
-  <link rel="manifest" href="manifest.json?v=8">
+  <link rel="manifest" href="manifest.json?v=9">
   <link rel="icon" href="icon-192.png">
   <link rel="apple-touch-icon" href="icon-192.png">
-  <link rel="stylesheet" href="style.css?v=8">
+  <link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
   <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -35,8 +35,7 @@
     <main id="appMain">
       <section class="screen is-active" data-screen="home" aria-labelledby="homeTitle">
         <div class="hero-copy">
-          <p class="eyebrow">RÁPIDO • JUSTO • EM TEMPO REAL</p>
-          <h1 id="homeTitle">Duas cartas.<br><span>Um símbolo.</span><br>Vai!</h1>
+          <h1 id="homeTitle">Duas cartas.<br><span>Um símbolo.</span></h1>
           <p class="hero-lede">Ache a única combinação antes dos seus amigos. Um toque decide a rodada.</p>
         </div>
 
@@ -102,10 +101,6 @@
           <p class="duration-hint">No modo completo são até 55 rodadas. O Poço termina assim que alguém fica sem cartas.</p>
           <label class="field optional-password"><span>Senha da sala <small>opcional</small></span>
             <input id="roomPasswordCreate" type="password" inputmode="numeric" pattern="[0-9]{3,8}" maxlength="8" placeholder="3 a 8 números" autocomplete="new-password">
-          </label>
-          <label class="check-field">
-            <input id="addBotsInput" type="checkbox">
-            <span><b>Adicionar jogadores de treino</b><small>Opcional; você também poderá adicioná-los no lobby.</small></span>
           </label>
           <div class="theme-choice">
             <div class="theme-swatch"><b>A</b><b>7</b><b>G</b></div>
@@ -204,16 +199,16 @@
           <div class="profile-badge" id="profileBadge">L</div>
         </div>
         <form id="profileForm" class="profile-form">
-          <fieldset>
-            <legend>Escolha seu avatar</legend>
-            <div class="avatar-picker" id="avatarPicker"></div>
-          </fieldset>
           <label class="field"><span>Nome de jogador</span>
             <input id="profileNameInput" maxlength="18" autocomplete="nickname" required>
           </label>
           <label class="field"><span>Senha do perfil <small>3 números</small></span>
             <input id="profilePinInput" type="password" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="•••" autocomplete="new-password" required>
           </label>
+          <fieldset>
+            <legend>Escolha seu avatar</legend>
+            <div class="avatar-picker" id="avatarPicker"></div>
+          </fieldset>
           <button class="button button-dark" type="submit">Salvar perfil</button>
         </form>
         <div class="profile-stats" id="profileStats"></div>
@@ -314,7 +309,14 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="config.js?v=8"></script>
-  <script src="app.js?v=8" defer></script>
+  <div class="activity-overlay" id="activityOverlay" hidden role="status" aria-live="assertive">
+    <div class="activity-card">
+      <span class="activity-spinner" aria-hidden="true"></span>
+      <strong id="activityTitle">Entrando na sala…</strong>
+      <small id="activityDetail">Sincronizando jogadores e partida.</small>
+    </div>
+  </div>
+  <script src="config.js?v=9"></script>
+  <script src="app.js?v=9" defer></script>
 </body>
 </html>

@@ -490,7 +490,7 @@ button.score-chip { color: inherit; cursor: pointer; }
 
 .game-card {
   position: relative;
-  width: min(82vw, 35dvh, 350px);
+  width: min(88vw, 38dvh, 380px);
   max-width: 100%;
   aspect-ratio: 1;
   overflow: hidden;
@@ -691,6 +691,40 @@ button.score-chip { color: inherit; cursor: pointer; }
 .result-dialog .button { width: 100%; }
 .result-dialog .text-button { margin-top: 12px; }
 
+.activity-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(23, 35, 60, .88);
+}
+.activity-overlay[hidden] { display: none; }
+.activity-card {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  width: min(100%, 330px);
+  padding: 28px 22px;
+  border: 3px solid var(--ink);
+  border-radius: 20px;
+  background: var(--paper);
+  box-shadow: 8px 9px 0 var(--yellow);
+  text-align: center;
+}
+.activity-card strong { font-family: Impact, "Arial Black", sans-serif; font-size: 27px; }
+.activity-card small { color: var(--ink-soft); font-size: 11px; line-height: 1.4; }
+.activity-spinner {
+  width: 58px;
+  height: 58px;
+  border: 8px solid #dce7ff;
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: activitySpin .7s linear infinite;
+}
+@keyframes activitySpin { to { transform: rotate(360deg); } }
+
 .toast {
   position: fixed;
   left: 50%;
@@ -714,7 +748,7 @@ button.score-chip { color: inherit; cursor: pointer; }
 .toast.is-error { background: var(--coral-dark); }
 
 @media (max-height: 710px) {
-  .game-card { width: min(74vw, 32dvh, 290px); }
+  .game-card { width: min(82vw, 34dvh, 320px); }
   .game-topline { padding-top: max(5px, env(safe-area-inset-top)); }
   .score-strip { min-height: 34px; padding-bottom: 3px; }
 }

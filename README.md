@@ -12,15 +12,16 @@ Jogo multiplayer inspirado na lógica matemática do Dobble, feito como PWA est�
 - Salas simultâneas com código, lista de salas abertas e senha opcional de 3 a 8 números.
 - Cada perfil pode hospedar somente uma sala aberta; o anfitrião pode encerrá-la a qualquer momento.
 - Inclusão e remoção de vários jogadores de treino aparecem imediatamente e entram em uma fila curta de confirmação ao fundo; não é preciso esperar entre os toques.
-- Contagem regressiva sincronizada: as duas cartas só aparecem depois que todas as 16 imagens da rodada estão carregadas.
+- Contagem regressiva por horário do servidor: todos os aparelhos revelam a rodada no mesmo instante, depois que as 16 imagens estão carregadas.
 - Progressão fiel dos quatro modos: cartas ganhas ou descartadas permanecem no topo correto, e Batata Quente transfere a mão inteira.
+- Cada carta tem uma disposição visual imutável: posição, tamanho e rotação acompanham a própria carta quando ela muda de lugar ou permanece entre rodadas.
 - Duração rápida de 8, clássica de 16, longa de 32 ou completa de até 55 rodadas.
 - Empates abrem uma rodada extra apenas entre os jogadores empatados.
 - Perfil protegido por PIN de 3 números e ranking por vitórias ou aproveitamento, sempre sem jogadores de treino.
 - Perfil administrativo `Lincoln` para configurações protegidas; jogadores comuns não veem essa área.
 - Modos 1 a 4 do manual. `Batata quente` e `Presente de grego` ficam limitados a 4 jogadores.
 - Modo demonstração local com adversários de treino.
-- Backend Google Apps Script + Sheets com bloqueio atômico para decidir quem tocou primeiro.
+- Backend Google Apps Script + Sheets com estado ativo em cache compartilhado, persistência no Sheets e bloqueio atômico somente para decidir jogadas.
 - PWA instalável e cache dos arquivos para abertura rápida.
 
 ## Estrutura compacta
@@ -62,7 +63,7 @@ A implantação principal fica definida em `config.js`, portanto aparelhos novos
 
 ## Como a disputa é decidida
 
-O app financeiro consultava uma revisão a cada 8 segundos e sincronizava um banco inteiro. Aqui cada toque envia apenas um evento pequeno. Enquanto a sala está aberta, uma nova consulta começa 250 ms após a resposta anterior, sem criar pedidos sobrepostos.
+O app financeiro consultava uma revisão a cada 8 segundos e sincronizava um banco inteiro. Aqui cada toque envia apenas um evento pequeno. Enquanto a partida está aberta, as leituras usam o cache compartilhado do Apps Script em ciclos de até 250 ms, sem reabrir ou regravar a planilha a cada consulta. O Sheets recebe somente mudanças reais de estado.
 
 O mais importante: o backend executa cada `claim` dentro de `LockService.getScriptLock()`. Mesmo que dois pedidos cheguem quase juntos, o primeiro pedido correto trava a rodada; os seguintes recebem `late` e não alteram o placar. O horário decisivo é o recebimento no servidor, não o relógio do celular.
 

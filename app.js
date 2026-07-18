@@ -3,9 +3,9 @@
 
   const STORAGE_KEY = "ponto_app_state_v1";
   const ACTIVE_POLL_MS = 250;
-  const LOBBY_POLL_MS = 650;
+  const LOBBY_POLL_MS = 500;
   const PENALTY_MS = 3000;
-  const ASSET_VERSION = "8";
+  const ASSET_VERSION = "9";
   const THEME_ROOT = "themes/letters-numbers";
   const SYNC_URL = String(window.PONTO_CONFIG?.appsScriptUrl || "https://script.google.com/macros/s/AKfycbxMNe2tp1R0D0IaPxm4OemPqfO2WwIVX9ghnlU47vJw2v8mWKjoq5_Nb4InpIwXVpU/exec").trim().replace(/\/+$/, "");
   const ADMIN_PROFILE_ID = "admin_lincoln";
@@ -207,6 +207,7 @@
   let rankingCache = null;
   let rankingRequestId = 0;
   let serverClockOffset = 0;
+  const serverClockSamples = [];
   let symbolsLoaded = false;
   let roundRevealTimer = 0;
   let roundRevealReadyId = "";
@@ -254,13 +255,16 @@
     image.src = symbolPath(symbolId);
   }))).then(() => { symbolsLoaded = true; });
 
-  function renderCard(element, cardId, roundKey, options = {}) {
+  function renderCard(element, cardId, _roundKey, options = {}) {
     if (!element) return;
     const card = FULL_DECK[Number(cardId)] || FULL_DECK[0];
-    const random = randomFrom(hashSeed(`${cardId}:${roundKey}:${options.variant || "card"}`));
-    const symbols = shuffled(card, hashSeed(`${roundKey}:${cardId}:symbols`));
+    const layoutKey = `immutable-card-${cardId}`;
+    if (element.dataset.layoutKey === layoutKey && element.querySelectorAll(".symbol").length === 8) return;
+    const random = randomFrom(hashSeed(`${layoutKey}:layout`));
+    const symbols = shuffled(card, hashSeed(`${layoutKey}:symbols`));
     element.innerHTML = "";
     element.dataset.cardId = String(cardId);
+    element.dataset.layoutKey = layoutKey;
 
     symbols.forEach((symbolId, index) => {
       const [left, top, size] = CARD_LAYOUT[index];
@@ -381,7 +385,7 @@
 
   async function api(action, payload = {}, options = {}) {
     if (!state.syncUrl) throw new Error("Configure a URL do Apps Script primeiro.");
-    updateSyncPill("busy");
+    if (!options.silent) updateSyncPill("busy");
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), options.timeout || 9000);
     let response;
@@ -410,7 +414,19 @@
     let json;
     try { json = JSON.parse(text); } catch (_) { throw new Error("O Apps Script devolveu uma resposta inválida."); }
     if (!response.ok || json.ok === false) throw new Error(json.error || "Falha na sincronização.");
-    if (Number(json.serverTime || 0) > 0) serverClockOffset = Number(json.serverTime) - Math.round((requestStartedAt + now()) / 2);
+    if (Number(json.serverTime || 0) > 0) {
+      const responseAt = now();
+      const serverReceivedAt = Number(json.serverReceivedAt || json.serverTime);
+      const serverSentAt = Number(json.serverTime);
+      const networkRtt = Math.max(0, (responseAt - requestStartedAt) - Math.max(0, serverSentAt - serverReceivedAt));
+      serverClockSamples.push({
+        offset: Math.round(((serverReceivedAt - requestStartedAt) + (serverSentAt - responseAt)) / 2),
+        rtt: networkRtt,
+      });
+      if (serverClockSamples.length > 8) serverClockSamples.shift();
+      const bestSamples = [...serverClockSamples].sort((a, b) => a.rtt - b.rtt).slice(0, 3);
+      serverClockOffset = Math.round(bestSamples.reduce((sum, sample) => sum + sample.offset, 0) / bestSamples.length);
+    }
     if (json.token) {
       state.profile.token = json.token;
       if (json.profile?.id) state.profile.id = json.profile.id;
@@ -420,12 +436,34 @@
       state.profile.isAdmin = json.profile.isAdmin === true;
       saveState();
     }
-    updateSyncPill("online");
+    if (!options.silent) updateSyncPill("online");
     return json;
   }
 
   function serverNow() {
     return now() + serverClockOffset;
+  }
+
+  function acceptRemoteRoom(incoming, force = false) {
+    if (!incoming) return false;
+    const sameRoom = room && String(room.code) === String(incoming.code);
+    const currentRevision = Number(room?.revision || 0);
+    const incomingRevision = Number(incoming.revision || 0);
+    const currentUpdatedAt = Number(room?.updatedAt || 0);
+    const incomingUpdatedAt = Number(incoming.updatedAt || 0);
+    if (!force && sameRoom && (incomingRevision < currentRevision || (incomingRevision === currentRevision && incomingUpdatedAt < currentUpdatedAt))) return false;
+    room = { ...incoming, transport: "remote" };
+    return true;
+  }
+
+  function showActivity(title = "Entrando na sala…", detail = "Sincronizando jogadores e partida.") {
+    $("#activityTitle").textContent = title;
+    $("#activityDetail").textContent = detail;
+    $("#activityOverlay").hidden = false;
+  }
+
+  function hideActivity() {
+    $("#activityOverlay").hidden = true;
   }
 
   async function ensureRemoteProfile(forceUpdate = false) {
@@ -553,7 +591,7 @@
         api("closeRoom", { code: result.room.code }, { timeout: 7000 }).catch(() => {});
         return;
       }
-      room = { ...result.room, transport: "remote" };
+      acceptRemoteRoom(result.room, true);
       addRecentRoom(room);
       renderLobby();
       showScreen(room.status === "active" ? "game" : "lobby");
@@ -611,15 +649,18 @@
       showScreen("settings");
       return;
     }
+    showActivity("Entrando na sala…", "Buscando a sala e sincronizando os jogadores.");
     try {
       await ensureRemoteProfile();
       const result = await api("joinRoom", { code: normalized, password, source });
-      room = { ...result.room, transport: "remote" };
+      acceptRemoteRoom(result.room, true);
       addRecentRoom(room);
       renderLobby();
       showScreen(room.status === "active" ? "game" : "lobby");
     } catch (error) {
       toast(error.message, "error");
+    } finally {
+      hideActivity();
     }
   }
 
@@ -864,7 +905,7 @@
       claimedBy: "",
       claimedAt: 0,
       locked: false,
-      revealAt: now() + (firstRound ? 3200 : 650),
+      revealAt: now() + (firstRound ? 4200 : 1800),
       startedAt: now(),
     };
   }
@@ -875,7 +916,7 @@
     try {
       if (room.transport === "remote") {
         const result = await api("startGame", { code: room.code });
-        room = { ...result.room, transport: "remote" };
+        acceptRemoteRoom(result.room, true);
       } else {
         room.status = "active";
         room.roundNumber = 1;
@@ -1069,7 +1110,7 @@
           clientSentAt: now(),
           targetId: selectedTargetForRoom()?.id || "",
         }, { timeout: 7000 });
-        room = { ...result.room, transport: "remote" };
+        acceptRemoteRoom(result.room, true);
         if (result.result === "notReady") {
           claimPending = false;
           scheduleRoundReveal();
@@ -1150,7 +1191,7 @@
       playTone("late");
     }
 
-    setTimeout(advanceDemoRound, 920);
+    setTimeout(advanceDemoRound, 1200);
   }
 
   function applyRoundWin(player) {
@@ -1292,12 +1333,13 @@
     const generation = pollGeneration;
     const poll = async () => {
       if (generation !== pollGeneration || !room || room.transport !== "remote") return;
+      const pollStartedAt = now();
       const roomCode = room.code;
       const delay = currentScreen === "game" && room.status === "active" ? ACTIVE_POLL_MS : LOBBY_POLL_MS;
       try {
-        const result = await api("room", { code: roomCode, knownRoundId: room.round?.id || "" }, { timeout: 6500 });
+        const result = await api("room", { code: roomCode, knownRoundId: room.round?.id || "", knownRevision: Number(room.revision || 0) }, { timeout: 6500, silent: true });
         if (generation !== pollGeneration || botMutationPending || !room || room.code !== roomCode) return;
-        if (result.room) room = { ...result.room, transport: "remote" };
+        if (result.room) acceptRemoteRoom(result.room);
         if (room.status === "closed") {
           stopPolling();
           room = null;
@@ -1318,7 +1360,8 @@
         updateSyncPill("demo", "Reconectando…");
       }
       if (generation !== pollGeneration) return;
-      pollTimer = setTimeout(poll, document.visibilityState === "visible" ? delay : 5000);
+      const nextDelay = document.visibilityState === "visible" ? Math.max(25, delay - (now() - pollStartedAt)) : 5000;
+      pollTimer = setTimeout(poll, nextDelay);
     };
     pollTimer = setTimeout(poll, 100);
   }
@@ -1521,8 +1564,7 @@
       const password = $("#roomPasswordCreate").value.trim();
       if (password && !/^\d{3,8}$/.test(password)) return toast("A senha da sala deve ter de 3 a 8 números.", "error");
       const maxPlayers = Number($("#maxPlayersInput").value);
-      const botCount = $("#addBotsInput").checked ? Math.min(3, maxPlayers - 1) : 0;
-      createRoom({ modeId: selectedMode, maxPlayers, roundsPreset: $("#roundsInput").value, botCount, password });
+      createRoom({ modeId: selectedMode, maxPlayers, roundsPreset: $("#roundsInput").value, botCount: 0, password });
     });
     $("#joinRoomForm").addEventListener("submit", (event) => {
       event.preventDefault();
