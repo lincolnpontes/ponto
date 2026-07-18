@@ -1,0 +1,293 @@
+{
+  "id": "letters-numbers",
+  "name": "Letras & números",
+  "version": 1,
+  "symbolCount": 57,
+  "symbols": [
+    {
+      "id": 0,
+      "label": "A",
+      "file": "symbols/00.png"
+    },
+    {
+      "id": 1,
+      "label": "B",
+      "file": "symbols/01.png"
+    },
+    {
+      "id": 2,
+      "label": "C",
+      "file": "symbols/02.png"
+    },
+    {
+      "id": 3,
+      "label": "D",
+      "file": "symbols/03.png"
+    },
+    {
+      "id": 4,
+      "label": "E",
+      "file": "symbols/04.png"
+    },
+    {
+      "id": 5,
+      "label": "F",
+      "file": "symbols/05.png"
+    },
+    {
+      "id": 6,
+      "label": "G",
+      "file": "symbols/06.png"
+    },
+    {
+      "id": 7,
+      "label": "H",
+      "file": "symbols/07.png"
+    },
+    {
+      "id": 8,
+      "label": "I",
+      "file": "symbols/08.png"
+    },
+    {
+      "id": 9,
+      "label": "J",
+      "file": "symbols/09.png"
+    },
+    {
+      "id": 10,
+      "label": "K",
+      "file": "symbols/10.png"
+    },
+    {
+      "id": 11,
+      "label": "L",
+      "file": "symbols/11.png"
+    },
+    {
+      "id": 12,
+      "label": "M",
+      "file": "symbols/12.png"
+    },
+    {
+      "id": 13,
+      "label": "N",
+      "file": "symbols/13.png"
+    },
+    {
+      "id": 14,
+      "label": "O",
+      "file": "symbols/14.png"
+    },
+    {
+      "id": 15,
+      "label": "P",
+      "file": "symbols/15.png"
+    },
+    {
+      "id": 16,
+      "label": "Q",
+      "file": "symbols/16.png"
+    },
+    {
+      "id": 17,
+      "label": "R",
+      "file": "symbols/17.png"
+    },
+    {
+      "id": 18,
+      "label": "S",
+      "file": "symbols/18.png"
+    },
+    {
+      "id": 19,
+      "label": "T",
+      "file": "symbols/19.png"
+    },
+    {
+      "id": 20,
+      "label": "U",
+      "file": "symbols/20.png"
+    },
+    {
+      "id": 21,
+      "label": "V",
+      "file": "symbols/21.png"
+    },
+    {
+      "id": 22,
+      "label": "W",
+      "file": "symbols/22.png"
+    },
+    {
+      "id": 23,
+      "label": "X",
+      "file": "symbols/23.png"
+    },
+    {
+      "id": 24,
+      "label": "Y",
+      "file": "symbols/24.png"
+    },
+    {
+      "id": 25,
+      "label": "Z",
+      "file": "symbols/25.png"
+    },
+    {
+      "id": 26,
+      "label": "0",
+      "file": "symbols/26.png"
+    },
+    {
+      "id": 27,
+      "label": "1",
+      "file": "symbols/27.png"
+    },
+    {
+      "id": 28,
+      "label": "2",
+      "file": "symbols/28.png"
+    },
+    {
+      "id": 29,
+      "label": "3",
+      "file": "symbols/29.png"
+    },
+    {
+      "id": 30,
+      "label": "4",
+      "file": "symbols/30.png"
+    },
+    {
+      "id": 31,
+      "label": "5",
+      "file": "symbols/31.png"
+    },
+    {
+      "id": 32,
+      "label": "6",
+      "file": "symbols/32.png"
+    },
+    {
+      "id": 33,
+      "label": "7",
+      "file": "symbols/33.png"
+    },
+    {
+      "id": 34,
+      "label": "8",
+      "file": "symbols/34.png"
+    },
+    {
+      "id": 35,
+      "label": "9",
+      "file": "symbols/35.png"
+    },
+    {
+      "id": 36,
+      "label": "a",
+      "file": "symbols/36.png"
+    },
+    {
+      "id": 37,
+      "label": "b",
+      "file": "symbols/37.png"
+    },
+    {
+      "id": 38,
+      "label": "c",
+      "file": "symbols/38.png"
+    },
+    {
+      "id": 39,
+      "label": "d",
+      "file": "symbols/39.png"
+    },
+    {
+      "id": 40,
+      "label": "e",
+      "file": "symbols/40.png"
+    },
+    {
+      "id": 41,
+      "label": "f",
+      "file": "symbols/41.png"
+    },
+    {
+      "id": 42,
+      "label": "g",
+      "file": "symbols/42.png"
+    },
+    {
+      "id": 43,
+      "label": "h",
+      "file": "symbols/43.png"
+    },
+    {
+      "id": 44,
+      "label": "i",
+      "file": "symbols/44.png"
+    },
+    {
+      "id": 45,
+      "label": "j",
+      "file": "symbols/45.png"
+    },
+    {
+      "id": 46,
+      "label": "k",
+      "file": "symbols/46.png"
+    },
+    {
+      "id": 47,
+      "label": "l",
+      "file": "symbols/47.png"
+    },
+    {
+      "id": 48,
+      "label": "m",
+      "file": "symbols/48.png"
+    },
+    {
+      "id": 49,
+      "label": "n",
+      "file": "symbols/49.png"
+    },
+    {
+      "id": 50,
+      "label": "o",
+      "file": "symbols/50.png"
+    },
+    {
+      "id": 51,
+      "label": "p",
+      "file": "symbols/51.png"
+    },
+    {
+      "id": 52,
+      "label": "q",
+      "file": "symbols/52.png"
+    },
+    {
+      "id": 53,
+      "label": "r",
+      "file": "symbols/53.png"
+    },
+    {
+      "id": 54,
+      "label": "s",
+      "file": "symbols/54.png"
+    },
+    {
+      "id": 55,
+      "label": "t",
+      "file": "symbols/55.png"
+    },
+    {
+      "id": 56,
+      "label": "u",
+      "file": "symbols/56.png"
+    }
+  ]
+}

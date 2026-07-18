@@ -1,0 +1,15 @@
+{
+  "name": "PONTO! — jogo de símbolos",
+  "short_name": "PONTO!",
+  "description": "Encontre o único símbolo em comum antes de todo mundo.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fffaf0",
+  "theme_color": "#ff5c45",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
