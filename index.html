@@ -12,10 +12,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>PONTO! — jogo de símbolos</title>
-  <link rel="manifest" href="manifest.json?v=16">
+  <link rel="manifest" href="manifest.json?v=19">
   <link rel="icon" href="icon-192.png">
   <link rel="apple-touch-icon" href="icon-192.png">
-  <link rel="stylesheet" href="style.css?v=16">
+  <link rel="stylesheet" href="style.css?v=19">
 </head>
 <body>
   <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -115,7 +115,7 @@
                 <span class="checkmark" aria-hidden="true">✓</span>
               </button>
               <button class="theme-choice" type="button" data-theme-id="rescue-heroes" aria-pressed="false">
-                <span class="theme-swatch rescue-swatch" aria-hidden="true"><img src="themes/rescue-heroes/symbols/13.png?v=16" alt=""><img src="themes/rescue-heroes/symbols/27.png?v=16" alt=""><img src="themes/rescue-heroes/symbols/40.png?v=16" alt=""></span>
+                <span class="theme-swatch rescue-swatch" aria-hidden="true"><img src="themes/rescue-heroes/symbols/13.png?v=19" alt=""><img src="themes/rescue-heroes/symbols/27.png?v=19" alt=""><img src="themes/rescue-heroes/symbols/40.png?v=19" alt=""></span>
                 <span><strong>Heróis do Resgate</strong><small>Desenhos favoritos misturados</small></span>
                 <span class="checkmark" aria-hidden="true">✓</span>
               </button>
@@ -130,7 +130,7 @@
             <h2>Digite o código da sala</h2>
           </div>
           <div class="join-entry-row">
-            <label class="field code-field"><span>Código</span>
+            <label class="field code-field" aria-label="Código da sala">
               <input id="roomCodeInput" maxlength="5" inputmode="text" autocomplete="off" placeholder="P0NT0" required>
             </label>
             <button class="button button-primary join-submit-button" type="submit">Entrar <span>→</span></button>
@@ -171,7 +171,7 @@
         <div class="game-topline">
           <button class="round-icon-button" id="leaveGameBtn" aria-label="Encerrar ou sair da partida">×</button>
           <div class="game-room-label"><span id="gameModeTitle">Torre do caos</span><small>Sala <b id="gameRoomCode">P0NT0</b></small></div>
-          <button class="round-icon-button" id="soundBtn" aria-label="Ativar ou desativar som">♪</button>
+          <button class="round-icon-button" id="soundBtn" aria-label="Ativar ou desativar som">🔊</button>
         </div>
 
         <div class="score-strip" id="scoreStrip"></div>
@@ -184,14 +184,20 @@
 
         <div class="card-zone observed-zone">
           <div class="card-label"><span id="observedLabel">CARTA CENTRAL</span><b id="roundCounter">1 / 12</b></div>
-          <div class="game-card observed-card" id="observedCard" aria-label="Carta observada"></div>
+          <div class="card-stack" id="observedStack">
+            <div class="card-stack-layers" aria-hidden="true"></div>
+            <div class="game-card observed-card" id="observedCard" aria-label="Carta observada"></div>
+          </div>
         </div>
 
         <div class="match-divider" aria-hidden="true"><span></span><b>ACHE O IGUAL</b><span></span></div>
 
         <div class="card-zone player-zone">
           <div class="card-label"><span id="playerCardLabel">SUA CARTA</span><b id="playerCardCount">+0 cartas</b></div>
-          <div class="game-card player-card" id="playerCard" aria-label="Sua carta"></div>
+          <div class="card-stack" id="playerStack">
+            <div class="card-stack-layers" aria-hidden="true"></div>
+            <div class="game-card player-card" id="playerCard" aria-label="Sua carta"></div>
+          </div>
         </div>
 
         <div class="game-feedback" id="gameFeedback" role="status" aria-live="assertive"></div>
@@ -303,6 +309,44 @@
     <button class="text-button" id="closeResultBtn">Voltar ao início</button>
   </dialog>
 
+  <dialog class="pin-dialog training-dialog" id="trainingDialog">
+    <div class="pin-avatar">🎯</div>
+    <span class="result-kicker">PARTIDA DE TREINO</span>
+    <h2>Prepare o treino</h2>
+    <p>Escolha como você quer jogar antes de começar.</p>
+    <form id="trainingForm">
+      <label class="field"><span>Tipo de jogo</span>
+        <select id="trainingModeInput">
+          <option value="tower">Torre do caos</option>
+          <option value="well">O poço</option>
+          <option value="potato">Batata quente</option>
+          <option value="gift">Presente de grego</option>
+        </select>
+      </label>
+      <label class="field"><span>Tema</span>
+        <select id="trainingThemeInput">
+          <option value="letters-numbers">Maiúsculas & números</option>
+          <option value="rescue-heroes">Heróis do Resgate</option>
+        </select>
+      </label>
+      <label class="field"><span>Jogadores</span>
+        <select id="trainingPlayersInput">
+          <option value="2">2 jogadores</option>
+          <option value="3">3 jogadores</option>
+          <option value="4" selected>4 jogadores</option>
+          <option value="5">5 jogadores</option>
+          <option value="6">6 jogadores</option>
+          <option value="7">7 jogadores</option>
+          <option value="8">8 jogadores</option>
+        </select>
+      </label>
+      <div class="dialog-actions">
+        <button class="button button-paper" id="trainingCancelBtn" type="button">Cancelar</button>
+        <button class="button button-primary" type="submit">Começar</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog class="pin-dialog auth-dialog" id="authDialog">
     <div class="pin-avatar">✦</div>
     <span class="result-kicker">BEM-VINDO AO PONTO!</span>
@@ -394,7 +438,7 @@
       <small id="activityDetail">Sincronizando jogadores e partida.</small>
     </div>
   </div>
-  <script src="config.js?v=16"></script>
-  <script src="app.js?v=16" defer></script>
+  <script src="config.js?v=19"></script>
+  <script src="app.js?v=19" defer></script>
 </body>
 </html>

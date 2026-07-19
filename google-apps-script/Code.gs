@@ -15,7 +15,7 @@ const ROOM_TTL_MS = 12 * 60 * 60 * 1000;
 const PENALTY_MS = 3000;
 const ADMIN_PROFILE_ID = 'admin_lincoln';
 const ADMIN_INITIAL_PIN = '0784';
-const BACKEND_VERSION = 8;
+const BACKEND_VERSION = 9;
 const CACHE_SECONDS = 21600;
 const FIRST_ROUND_LEAD_MS = 4000;
 const NEXT_ROUND_LEAD_MS = 2200;
@@ -363,6 +363,7 @@ function playerFromProfile_(profile, isHost) {
     id: String(profile.id), name: String(profile.name), avatar: String(profile.avatar),
     isHost: Boolean(isHost), ready: true, score: 0, cardCount: 0, remaining: 8,
     penaltyCards: 0, penaltyUntil: 0, currentStreak: 0,
+    connected: true, joinedAt: Date.now(), lastSeenAt: Date.now(), disconnectedAt: 0,
   };
 }
 
@@ -373,7 +374,17 @@ function botPlayer_(index) {
     id: `bot_${Utilities.getUuid()}`, name: names[index % names.length], avatar: avatars[index % avatars.length],
     isHost: false, ready: true, score: 0, cardCount: 0, remaining: 8,
     penaltyCards: 0, penaltyUntil: 0, currentStreak: 0, bot: true,
+    connected: true, joinedAt: Date.now(), lastSeenAt: Date.now(), disconnectedAt: 0,
   };
+}
+
+function playerConnected_(player) {
+  return Boolean(player && (player.bot || player.connected !== false));
+}
+
+function setRoomHost_(room, hostId) {
+  room.hostId = String(hostId || '');
+  room.players.forEach((player) => { player.isHost = String(player.id) === room.hostId; });
 }
 
 function createRoom_(request, payload) {
@@ -490,9 +501,10 @@ function openRooms_() {
 function joinRoom_(request, payload) {
   const profile = requireProfile_(request);
   const room = getRoom_(payload.code);
-  if (room.status !== 'lobby') throw new Error('Essa partida já começou.');
-  if (room.hasPassword && String(payload.source || '') === 'open-list' && room.passwordHash !== secretHash_(`room:${room.code}`, String(payload.password || ''))) throw new Error('Senha da sala incorreta.');
   let player = room.players.find((entry) => String(entry.id) === String(profile.id));
+  if (room.status === 'active' && !player) throw new Error('Essa partida já começou. Somente quem já estava nela pode voltar.');
+  if (['lobby', 'active'].indexOf(room.status) < 0) throw new Error('Essa sala não está mais aberta.');
+  if (room.hasPassword && String(payload.source || '') === 'open-list' && room.passwordHash !== secretHash_(`room:${room.code}`, String(payload.password || ''))) throw new Error('Senha da sala incorreta.');
   if (!player) {
     if (room.players.length >= room.maxPlayers) throw new Error('A sala está cheia.');
     player = playerFromProfile_(profile, false);
@@ -501,6 +513,10 @@ function joinRoom_(request, payload) {
   } else {
     player.name = String(profile.name);
     player.avatar = String(profile.avatar);
+    player.connected = true;
+    player.lastSeenAt = Date.now();
+    player.disconnectedAt = 0;
+    event_('PLAYER_RECONNECTED', room.code, profile.id, {});
   }
   saveRoom_(room);
   return { room: publicRoom_(room) };
@@ -548,14 +564,26 @@ function closeRoom_(request, payload) {
 function leaveRoom_(request, payload) {
   const profile = requireProfile_(request);
   const room = getRoom_(payload.code);
-  room.players = room.players.filter((player) => String(player.id) !== String(profile.id));
-  if (!room.players.length) room.status = 'closed';
-  else if (room.hostId === String(profile.id)) {
-    room.hostId = String(room.players[0].id);
-    room.players[0].isHost = true;
+  const player = room.players.find((entry) => String(entry.id) === String(profile.id));
+  if (!player) return { room: publicRoom_(room) };
+  if (room.status === 'active') {
+    player.connected = false;
+    player.disconnectedAt = Date.now();
+    player.lastSeenAt = Date.now();
+    if (room.hostId === String(profile.id)) {
+      const nextHost = room.players.find((entry) => String(entry.id) !== String(profile.id) && !entry.bot && playerConnected_(entry));
+      if (nextHost) setRoomHost_(room, nextHost.id);
+    }
+  } else {
+    room.players = room.players.filter((entry) => String(entry.id) !== String(profile.id));
+    if (!room.players.length) room.status = 'closed';
+    else if (room.hostId === String(profile.id)) {
+      const nextHost = room.players.find((entry) => !entry.bot) || room.players[0];
+      setRoomHost_(room, nextHost.id);
+    }
   }
   saveRoom_(room);
-  event_('PLAYER_LEFT', room.code, profile.id, {});
+  event_(room.status === 'active' ? 'PLAYER_DISCONNECTED' : 'PLAYER_LEFT', room.code, profile.id, {});
   return { room: publicRoom_(room) };
 }
 
@@ -607,6 +635,7 @@ function startGame_(request, payload) {
     player.penaltyCards = 0; player.penaltyUntil = 0; player.currentStreak = 0;
     player.matchBestStreak = 0;
     player.pile = []; player.handCount = 0; player.topCardId = null;
+    player.connected = true; player.disconnectedAt = 0; player.lastSeenAt = Date.now();
   });
   if (room.mode === 'well') {
     room.centralCardId = takeCard_(room);
@@ -659,20 +688,23 @@ function prepareRound_(room, firstRound) {
   const observedCardIds = {};
   const targetIds = {};
   let central = room.centralCardId;
-  let eligiblePlayerIds = room.players.map((player) => String(player.id));
+  const connectedPlayers = room.players.filter(playerConnected_);
+  let eligiblePlayerIds = connectedPlayers.map((player) => String(player.id));
 
   if (room.isTiebreak) {
-    eligiblePlayerIds = room.tiebreakPlayerIds.slice();
+    eligiblePlayerIds = room.tiebreakPlayerIds.filter((playerId) => connectedPlayers.some((player) => String(player.id) === String(playerId)));
     central = takeCard_(room);
     eligiblePlayerIds.forEach((playerId) => {
       playerCardIds[playerId] = takeCard_(room);
       observedCardIds[playerId] = central;
     });
   } else if (room.mode === 'potato') {
-    const active = room.players.filter((player) => Number(player.handCount || 0) > 0);
+    const holders = room.players.filter((player) => Number(player.handCount || 0) > 0);
+    const active = holders.filter(playerConnected_);
     eligiblePlayerIds = active.map((player) => String(player.id));
-    active.forEach((player, index) => {
-      const target = active[(index + 1) % active.length];
+    active.forEach((player) => {
+      const currentIndex = holders.findIndex((entry) => String(entry.id) === String(player.id));
+      const target = holders[(currentIndex + 1) % holders.length];
       playerCardIds[player.id] = player.topCardId;
       observedCardIds[player.id] = target.topCardId;
       targetIds[player.id] = target.id;
@@ -681,10 +713,11 @@ function prepareRound_(room, firstRound) {
   } else {
     if (room.mode === 'tower' || room.mode === 'gift') room.centralCardId = takeCard_(room);
     central = room.centralCardId;
-    room.players.forEach((player, index) => {
+    connectedPlayers.forEach((player, index) => {
       if (room.mode === 'gift') {
-        const offset = 1 + ((room.roundNumber - 1) % Math.max(1, room.players.length - 1));
-        const target = room.players[(index + offset) % room.players.length];
+        const targets = room.players.filter((entry) => String(entry.id) !== String(player.id) && entry.topCardId !== null && entry.topCardId !== undefined);
+        const target = targets[(index + room.roundNumber - 1) % Math.max(1, targets.length)];
+        if (!target) return;
         targetIds[player.id] = target.id;
         playerCardIds[player.id] = target.topCardId;
       } else {
@@ -716,7 +749,7 @@ function prepareRound_(room, firstRound) {
 function requiredRoundReadyIds_(room) {
   const eligible = new Set((room.round.eligiblePlayerIds || room.players.map((player) => String(player.id))).map(String));
   return room.players
-    .filter((player) => !player.bot && eligible.has(String(player.id)))
+    .filter((player) => !player.bot && playerConnected_(player) && eligible.has(String(player.id)))
     .map((player) => String(player.id));
 }
 
@@ -739,6 +772,8 @@ function roundReady_(request, payload) {
     return { result: 'changed', room: publicRoom_(room) };
   }
   if (!room.players.some((player) => String(player.id) === String(profile.id))) throw new Error('Você não está nesta sala.');
+  const readyPlayer = room.players.find((player) => String(player.id) === String(profile.id));
+  if (!playerConnected_(readyPlayer)) return { result: 'waiting', room: publicRoom_(room) };
   room.round.readyPlayerIds = Array.isArray(room.round.readyPlayerIds) ? room.round.readyPlayerIds.map(String) : [];
   let changed = false;
   if (room.round.readyPlayerIds.indexOf(String(profile.id)) < 0) {
@@ -789,6 +824,7 @@ function claim_(request, payload) {
   if (room.status !== 'active') return { result: 'late', room: publicRoom_(room) };
   const player = room.players.find((entry) => String(entry.id) === String(profile.id));
   if (!player) throw new Error('Você não está nesta sala.');
+  if (!playerConnected_(player)) return { result: 'late', room: publicRoom_(room) };
   const requestId = String(payload.requestId || '');
   room.recentRequestIds = Array.isArray(room.recentRequestIds) ? room.recentRequestIds : [];
   if (requestId && room.recentRequestIds.indexOf(requestId) >= 0) return { result: 'late', room: publicRoom_(room) };
@@ -920,7 +956,7 @@ function maybeAdvanceRoom_(room) {
     saveRoom_(room);
     return room;
   }
-  const wellWinner = room.mode === 'well' ? room.players.find((player) => Number(player.remaining || 0) <= 0) : null;
+  const wellWinner = room.mode === 'well' ? room.players.find((player) => playerConnected_(player) && Number(player.remaining || 0) <= 0) : null;
   if (wellWinner) {
     finishRoom_(room, wellWinner.id);
     saveRoom_(room);
@@ -948,13 +984,15 @@ function completeRoomOrTiebreak_(room, forcedWinnerId) {
 
 function determineWinnerIds_(room, forcedId) {
   if (forcedId) return [String(forcedId)];
-  const values = room.players.map((player) => {
+  const candidates = room.players.filter(playerConnected_);
+  const players = candidates.length ? candidates : room.players;
+  const values = players.map((player) => {
     if (room.mode === 'well') return -Number(player.remaining || 0);
     if (room.mode === 'gift' || room.mode === 'potato') return -Number(player.penaltyCards || 0);
     return Number(player.cardCount || 0);
   });
   const best = Math.max.apply(null, values);
-  return room.players.filter((_, index) => values[index] === best).map((player) => String(player.id));
+  return players.filter((_, index) => values[index] === best).map((player) => String(player.id));
 }
 
 function finishRoom_(room, forcedWinnerId) {
