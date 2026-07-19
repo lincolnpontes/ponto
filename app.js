@@ -5,7 +5,7 @@
   const ACTIVE_POLL_MS = 250;
   const LOBBY_POLL_MS = 500;
   const PENALTY_MS = 3000;
-  const ASSET_VERSION = "16";
+  const ASSET_VERSION = "19";
   const THEMES = Object.freeze({
     "letters-numbers": { name: "Maiúsculas & números", root: "themes/letters-numbers" },
     "rescue-heroes": { name: "Heróis do Resgate", root: "themes/rescue-heroes" },
@@ -72,8 +72,8 @@
   const BOT_NAMES = ["Bia", "Caio", "Malu", "Nina", "Theo", "Zeca", "Iara"];
   const SYMBOL_LABELS = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", ..."ABCDEFGHIJKLMNOPQRSTU"];
   const CARD_LAYOUT = [
-    [50, 17, 24], [25, 31, 15], [75, 31, 27], [50, 48, 19],
-    [19, 60, 28], [81, 59, 14], [36, 79, 17], [67, 78, 25],
+    [50, 15, 26], [24, 31, 18], [76, 31, 31], [50, 48, 17],
+    [18, 60, 29], [82, 59, 18], [35, 81, 21], [68, 79, 27],
   ];
 
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -301,11 +301,11 @@
       if (options.interactive) node.type = "button";
       node.dataset.symbolId = String(symbolId);
       node.setAttribute("aria-label", themeId === "letters-numbers" ? `Símbolo ${SYMBOL_LABELS[symbolId]}${symbolId >= 36 ? ", segunda forma" : ""}` : `Símbolo ${symbolId + 1} do tema Heróis do Resgate`);
-      node.style.left = `${left + (random() - .5) * 3}%`;
-      node.style.top = `${top + (random() - .5) * 3}%`;
-      node.style.setProperty("--size", `${Math.max(11, size + (random() - .5) * 8).toFixed(1)}%`);
+      node.style.left = `${left + (random() - .5) * 1.4}%`;
+      node.style.top = `${top + (random() - .5) * 1.4}%`;
+      node.style.setProperty("--size", `${size}%`);
       node.style.setProperty("--rotation", `${Math.round(random() * 150 - 75)}deg`);
-      node.style.setProperty("--scale", String((.78 + random() * .50).toFixed(2)));
+      node.style.setProperty("--scale", String((.94 + random() * .12).toFixed(2)));
       node.innerHTML = `<img src="${symbolPath(symbolId, themeId)}" alt="" draggable="false">`;
       element.appendChild(node);
     });
@@ -326,6 +326,20 @@
       button.classList.toggle("is-selected", selected);
       button.setAttribute("aria-pressed", String(selected));
     });
+  }
+
+  function updateTrainingPlayerOptions() {
+    const mode = modeById($("#trainingModeInput").value);
+    const playerInput = $("#trainingPlayersInput");
+    $$("option", playerInput).forEach((option) => { option.disabled = Number(option.value) > mode.maxPlayers; });
+    if (Number(playerInput.value) > mode.maxPlayers) playerInput.value = String(mode.maxPlayers);
+  }
+
+  function openTrainingDialog() {
+    $("#trainingModeInput").value = selectedMode;
+    $("#trainingThemeInput").value = selectedTheme;
+    updateTrainingPlayerOptions();
+    if (!$("#trainingDialog").open) $("#trainingDialog").showModal();
   }
 
   function renderModeCards() {
@@ -361,7 +375,6 @@
       joinSource = "code";
       $("#joinPasswordField").hidden = true;
       $("#roomPasswordJoin").value = "";
-      setTimeout(() => $("#roomCodeInput")?.focus(), 120);
       refreshOpenRooms();
     }
   }
@@ -595,13 +608,13 @@
     const players = [{
       id: state.profile.id, name: state.profile.name, avatar: state.profile.avatar,
       isHost: true, ready: true, score: 0, cardCount: 0, remaining: 8,
-      penaltyCards: 0, penaltyUntil: 0,
+      penaltyCards: 0, penaltyUntil: 0, connected: true,
     }];
     const bots = shuffled(BOT_NAMES, `${state.profile.id}:${now()}`).slice(0, Math.min(botCount, Math.max(0, maxPlayers - 1)));
     bots.forEach((name, index) => players.push({
       id: `bot_${index}`, name, avatar: AVATARS[(index + 2) % AVATARS.length],
       isHost: false, ready: true, score: 0, cardCount: 0, remaining: 8,
-      penaltyCards: 0, penaltyUntil: 0, bot: true,
+      penaltyCards: 0, penaltyUntil: 0, connected: true, bot: true,
     }));
     return players;
   }
@@ -776,8 +789,8 @@
     $("#lobbyPlayers").innerHTML = (room.players || []).map((player) => `
       <div class="player-row${player.pending ? " is-pending" : ""}">
         <div class="player-avatar">${escapeHTML(player.avatar)}</div>
-        <div><strong>${escapeHTML(player.name)}${player.id === state.profile.id ? " (você)" : ""}</strong><small>${player.isHost ? "Anfitrião" : player.bot ? "Jogador de treino" : "Conectado agora"}</small></div>
-        <div class="player-actions"><span class="ready-pill">${player.pending ? "sincronizando" : "pronto"}</span>${isHost && player.bot ? `<button class="remove-bot-button" type="button" data-remove-bot="${escapeHTML(player.id)}" aria-label="Remover ${escapeHTML(player.name)}">×</button>` : ""}</div>
+        <div><strong>${escapeHTML(player.name)}${player.id === state.profile.id ? " (você)" : ""}</strong><small>${player.connected === false ? "Saiu — pode voltar com o mesmo código" : player.isHost ? "Anfitrião" : player.bot ? "Jogador de treino" : "Conectado agora"}</small></div>
+        <div class="player-actions"><span class="ready-pill">${player.connected === false ? "saiu" : player.pending ? "sincronizando" : "pronto"}</span>${isHost && player.bot ? `<button class="remove-bot-button" type="button" data-remove-bot="${escapeHTML(player.id)}" aria-label="Remover ${escapeHTML(player.name)}">×</button>` : ""}</div>
       </div>`).join("");
     const waitingServer = room.transport === "remote-pending" || botMutationPending;
     $("#startGameBtn").hidden = !isHost;
@@ -896,13 +909,13 @@
 
   function leaveCurrentRoom() {
     if (!room) return showScreen("home");
-    if (room.hostId === state.profile.id) return closeCurrentRoom();
     const leavingRoom = room;
+    const wasHost = room.hostId === state.profile.id;
     stopPolling();
     clearTimeout(botTimer);
     room = null;
     showScreen("home");
-    toast("Você saiu da sala.");
+    toast(wasHost && leavingRoom.status === "active" ? "Você saiu. Outro jogador assumirá a sala." : "Você saiu da sala.");
     if (leavingRoom.transport === "remote") api("leaveRoom", { code: leavingRoom.code }, { timeout: 7000 }).catch(() => {});
   }
 
@@ -1129,6 +1142,47 @@
     setTimeout(() => transfer.clone.remove(), 720);
   }
 
+  function renderCardStack(stackId, totalCards) {
+    const stack = $(`#${stackId}`);
+    if (!stack) return;
+    const layers = $(".card-stack-layers", stack);
+    if (!layers) return;
+    const total = Math.max(0, Math.round(Number(totalCards || 0)));
+    const visibleCards = total > 4 ? 5 : total;
+    const backgroundCards = Math.max(0, visibleCards - 1);
+    stack.dataset.totalCards = String(total);
+    stack.setAttribute("aria-label", `${total} ${total === 1 ? "carta" : "cartas"} nesta pilha`);
+    layers.innerHTML = Array.from({ length: backgroundCards }, (_, index) => {
+      const depth = backgroundCards - index;
+      const scale = (1 - depth * .004).toFixed(3);
+      return `<span class="card-stack-layer" style="--stack-x:${(-depth * 1.6).toFixed(1)}px;--stack-y:${(-depth * 2.2).toFixed(1)}px;--stack-scale:${scale}"></span>`;
+    }).join("");
+  }
+
+  function stackCountsForGame(player, selectedTarget) {
+    if (!room || room.round?.isTiebreak) return { observed: 1, player: 1 };
+    if (room.mode === "well") {
+      const discards = room.players.reduce((sum, entry) => sum + Number(entry.cardCount || 0), 0);
+      return { observed: Math.max(1, 1 + discards), player: Math.max(0, Number(player?.remaining || 0)) };
+    }
+    if (room.mode === "potato") {
+      return {
+        observed: Math.max(0, Number(selectedTarget?.handCount || 0)),
+        player: Math.max(0, Number(player?.handCount || 0)),
+      };
+    }
+    if (room.mode === "gift") {
+      return {
+        observed: Math.max(1, Number(room.roundsTotal || 1) - Number(room.roundNumber || 1) + 1),
+        player: Math.max(1, 1 + Number(selectedTarget?.penaltyCards || 0)),
+      };
+    }
+    return {
+      observed: Math.max(1, Number(room.roundsTotal || 1) - Number(room.roundNumber || 1) + 1),
+      player: Math.max(1, 1 + Number(player?.cardCount || 0)),
+    };
+  }
+
   function renderGame(force = false) {
     if (!room?.round) return;
     const player = currentPlayer();
@@ -1142,18 +1196,24 @@
     const selectedTarget = selectedTargetForRoom();
     $("#gameModeTitle").textContent = mode.title;
     $("#gameRoomCode").textContent = room.code;
+    $("#leaveGameBtn").textContent = "×";
+    $("#leaveGameBtn").setAttribute("aria-label", "Sair da partida");
     $("#observedLabel").textContent = observedLabelForRoom();
     $("#playerCardLabel").textContent = playerCardLabelForRoom();
     $("#roundCounter").textContent = room.round.isTiebreak ? "DESEMPATE" : room.mode === "potato" && Number(room.potatoStep || 1) > 1 ? `${room.roundNumber} / ${room.roundsTotal} · passe ${room.potatoStep}` : `${room.roundNumber} / ${room.roundsTotal}`;
     $("#playerCardCount").textContent = room.mode === "well" ? `${player?.remaining ?? 0} restantes` : room.mode === "potato" ? (Number(player?.handCount || 0) > 0 ? `${player.handCount} na mão` : "você passou") : room.mode === "gift" ? `${player?.penaltyCards || 0} recebidas` : `+${player?.cardCount ?? player?.score ?? 0} cartas`;
-    $("#soundBtn").textContent = state.sound ? "♪" : "×";
+    $("#soundBtn").textContent = state.sound ? "🔊" : "🔇";
+
+    const stackCounts = stackCountsForGame(player, selectedTarget);
+    renderCardStack("observedStack", stackCounts.observed);
+    renderCardStack("playerStack", stackCounts.player);
 
     $("#scoreStrip").innerHTML = room.players.map((entry) => {
       const score = room.mode === "well" ? entry.remaining : room.mode === "gift" || room.mode === "potato" ? entry.penaltyCards : entry.score;
       const canTarget = !room.round.isTiebreak && ["gift", "potato"].includes(room.mode) && entry.id !== state.profile.id && entry.topCardId !== null && entry.topCardId !== undefined && (room.mode !== "potato" || Number(entry.handCount || 0) > 0);
       const tag = canTarget ? "button" : "span";
       const targetAttribute = canTarget ? ` type="button" data-target-player="${escapeHTML(entry.id)}"` : "";
-      return `<${tag}${targetAttribute} class="score-chip${entry.id === state.profile.id ? " is-you" : ""}${selectedTarget?.id === entry.id ? " is-target" : ""}"><span class="score-avatar">${escapeHTML(entry.avatar)}</span><span>${escapeHTML(entry.name)}</span><b>${score ?? 0}</b></${tag}>`;
+      return `<${tag}${targetAttribute} class="score-chip${entry.id === state.profile.id ? " is-you" : ""}${selectedTarget?.id === entry.id ? " is-target" : ""}${entry.connected === false ? " is-offline" : ""}"><span class="score-avatar">${escapeHTML(entry.avatar)}</span><span>${escapeHTML(entry.name)}</span><b>${score ?? 0}</b></${tag}>`;
     }).join("");
 
     if (force || roundChanged) {
@@ -1276,6 +1336,7 @@
     if (!room?.round || room.status !== "active" || claimPending || room.round.locked || roundRevealReadyId !== room.round.id) return;
     if (Array.isArray(room.round.eligiblePlayerIds) && !room.round.eligiblePlayerIds.includes(state.profile.id)) return;
     const player = currentPlayer();
+    if (!player || player.connected === false) return;
     const clockNow = room.transport === "remote" ? serverNow() : now();
     if (Number(player?.penaltyUntil || 0) > clockNow) return;
     const selectedTarget = selectedTargetForRoom();
@@ -1890,7 +1951,17 @@
       }
     });
 
-    $("#quickPlayBtn").addEventListener("click", () => createRoom({ modeId: "tower", maxPlayers: 4, roundsPreset: "8", quick: true, botCount: 3 }));
+    $("#quickPlayBtn").addEventListener("click", openTrainingDialog);
+    $("#trainingModeInput").addEventListener("change", updateTrainingPlayerOptions);
+    $("#trainingCancelBtn").addEventListener("click", () => $("#trainingDialog").close());
+    $("#trainingForm").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const modeId = $("#trainingModeInput").value;
+      const maxPlayers = Math.min(Number($("#trainingPlayersInput").value), modeById(modeId).maxPlayers);
+      const themeId = normalizeThemeId($("#trainingThemeInput").value);
+      $("#trainingDialog").close();
+      createRoom({ modeId, maxPlayers, roundsPreset: "8", quick: true, botCount: Math.max(1, maxPlayers - 1), themeId });
+    });
     $("#createRoomForm").addEventListener("submit", (event) => {
       event.preventDefault();
       const password = $("#roomPasswordCreate").value.trim();
@@ -2127,7 +2198,7 @@
     const activeSession = Boolean(state.profile.token && sessionPin() && sessionStorage.getItem(`ponto_profile_unlocked_${state.profile.id}`) === "1");
     if (!activeSession) openAuthDialog();
     api("status", {}, { timeout: 10000 })
-      .then((status) => { if (Number(status.version || 0) < 8) updateSyncPill("busy", "Atualize o Code.gs"); })
+      .then((status) => { if (Number(status.version || 0) < 9) updateSyncPill("busy", "Atualize o Code.gs"); })
       .catch(() => updateSyncPill("demo", "Reconectando…"));
     if (!validateDeck()) console.error("Falha na validação matemática do baralho.");
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
